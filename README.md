@@ -30,7 +30,7 @@ your settings are kept in your browser.
 
 - The numbers (recipe times, workloads, prices, facility limits) were read from game build 3603741
   and checked against the game where we could. A game update can change them.
-- No game art is included.
+- The item, facility and Aniimo icons are the game's own art and belong to its owners.
 - This is a fan-made tool. It is not affiliated with or endorsed by the makers of Aniimo.
 
 ## License and credits

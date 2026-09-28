@@ -842,8 +842,9 @@
       if (fam && a.fam !== fam) continue;
       const key = a.n + "|" + JSON.stringify(Object.entries(a.ab).sort());
       const g = groups.get(key);
-      if (!g) groups.set(key, Object.assign({}, a, { formNames: [a.fn || "Basic Form"] }));
-      else g.formNames.push(a.fn || "Basic Form");
+      // form ids too, so the page can show the form names in another language
+      if (!g) groups.set(key, Object.assign({}, a, { formNames: [a.fn || "Basic Form"], formIds: [a.form] }));
+      else { g.formNames.push(a.fn || "Basic Form"); g.formIds.push(a.form); }
     }
     return [...groups.values()].sort((a, b) => b.ab[ability] - a.ab[ability]
       || Object.keys(b.ab).length - Object.keys(a.ab).length || a.n.localeCompare(b.n));
@@ -1041,8 +1042,8 @@
       if (!needs.every(([ab, lv, fam]) => (a.ab[ab] || 0) >= lv && (!fam || a.fam === fam))) continue;
       if (sig(a) === chosen) continue;
       const g = groups.get(sig(a));
-      if (!g) groups.set(sig(a), Object.assign({}, a, { formNames: [a.fn || "Basic Form"] }));
-      else g.formNames.push(a.fn || "Basic Form");
+      if (!g) groups.set(sig(a), Object.assign({}, a, { formNames: [a.fn || "Basic Form"], formIds: [a.form] }));
+      else { g.formNames.push(a.fn || "Basic Form"); g.formIds.push(a.form); }
     }
     const jobLevels = (a) => needs.reduce((s2, [ab]) => s2 + (a.ab[ab] || 0), 0);
     return [...groups.values()].sort((a, b) => Object.keys(b.ab).length - Object.keys(a.ab).length

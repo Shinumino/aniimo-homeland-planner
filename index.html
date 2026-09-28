@@ -37,6 +37,7 @@
   input[type=number], select, input[type=text] { width: 76px; padding: 3px 6px; border: 1px solid var(--line); border-radius: 6px;
     background: var(--bg); color: var(--ink); font: inherit; }
   input[type=text] { width: 120px; }
+  #rv, #workerMaxLevel, #rvGoalLevel { width: auto; }   /* their labels are longer in Portuguese */
   .hint { color: var(--muted); font-size: 12px; margin: 4px 0 8px; }
   table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
   th, td { text-align: left; padding: 5px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
@@ -82,6 +83,8 @@
     <div class="sub" id="buildInfo"></div>
   </div>
   <div style="text-align:right">
+    <label class="sub" style="display:inline-flex;gap:6px;align-items:center;margin-bottom:2px"><span>Language</span>
+      <select id="lang" style="width:auto"><option value="en">English</option><option value="pt">Português</option></select></label>
     <div class="headline" id="headline">…</div>
     <div class="sub" id="subline"></div>
   </div>
@@ -237,6 +240,7 @@
 <script src="icons/index.js" onerror="window.ANIIMO_ICONS = {}"></script>
 <script src="lp.js"></script>
 <script src="planner.js"></script>
+<script src="i18n.js"></script>
 <!-- HiGHS solver (highs-js, MIT): the loader and the WebAssembly packed as base64 (a page opened from
      disk cannot fetch a .wasm file). If either is missing, the built-in solver runs. -->
 <script src="vendor/highs.js" onerror="void 0"></script>
@@ -244,8 +248,13 @@
 <script>
 (function () {
   const D = window.ANIIMO_DATA, P = window.Planner;
+  // T(): the page's own words; N: game names (English keys in, the chosen language out)
+  const { T } = window.I18N, N = window.I18N.names(D);
   const $ = (id) => document.getElementById(id);
-  const fmt = (n, d = 0) => Number(n).toLocaleString("en-US", { maximumFractionDigits: d, minimumFractionDigits: d });
+  const fmt = (n, d = 0) => Number(n).toLocaleString(window.I18N.lang() === "pt" ? "pt-BR" : "en-US", { maximumFractionDigits: d, minimumFractionDigits: d });
+  const byName = (f) => (a, b) => f(a).localeCompare(f(b));
+  // form names of one Aniimo (or of merged forms with the same jobs), in the chosen language
+  const formLabel = (a) => (a.formIds || [a.form]).map((f, k) => N.form(f, (a.formNames || [a.fn || "Basic Form"])[k] || "Basic Form")).join(" / ");
   const STORE = "aniimo-planner-setup-v1";
   const ICONS = window.ANIIMO_ICONS || {};
   const ico = (key, big) => ICONS[key] ? `<img class="ico ${ICONS[key] === "g" ? "g" : ""} ${big ? "big" : ""}" src="icons/${key}.png" alt="" loading="lazy">` : "";
@@ -260,10 +269,10 @@
   };
   // Quick / Premium / High-Speed recipes are module unlocks; without the label a Quick Potato (x46 in
   // 40 min) looks like the normal Potato (x2) row. Pill shows the variant and the module that unlocks it.
-  const variantHtml = (r) => r && r.v ? ` <span class="pill" title="${r.vn || ""}">${r.v}${r.mod ? " · " + r.mod.join(" ") : ""}</span>` : "";
+  const variantHtml = (r) => r && r.v ? ` <span class="pill" title="${N.variant(r) || ""}">${T(r.v)}${r.mod ? " · " + N.mod(r.mod[0]) + " " + r.mod[1] : ""}</span>` : "";
   const makesHtml = (id) => {
     const r = recipeOf(id);
-    return r ? `<span class="makes">${r.out.map(([i, n]) => itemIco(i) + (D.items[i] ? D.items[i].n : i) + " x" + n).join(" + ")}${variantHtml(r)}</span>` : "";
+    return r ? `<span class="makes">${r.out.map(([i, n]) => itemIco(i) + N.item(i) + " x" + n).join(" + ")}${variantHtml(r)}</span>` : "";
   };
   const FAC_NAMES = Object.keys(D.facilities).filter((n) => D.recipes.some((r) => r.fac.some(([f]) => f === n))).sort();
 
@@ -300,7 +309,7 @@
   // ---------- inputs ----------
   function buildRv() {
     const sel = $("rv");
-    sel.innerHTML = Object.keys(D.rvCaps).map((lv) => `<option value="${lv}">RV ${lv}</option>`).join("");
+    sel.innerHTML = Object.keys(D.rvCaps).map((lv) => `<option value="${lv}">${T("RV {0}", lv)}</option>`).join("");
     sel.value = S.rv;
     sel.onchange = () => {
       S.rv = Number(sel.value);
@@ -337,17 +346,17 @@
 
   function renderFacilities() {
     const L = P.rvLimits(D, S.rv);
-    $("facilities").innerHTML = FAC_NAMES.map((n) => {
+    $("facilities").innerHTML = FAC_NAMES.slice().sort(byName(N.fac)).map((n) => {
       const f = S.facilities[n] || { count: 0, level: 1 };
       const maxLv = L.facilities[n] || 0, maxCount = L.counts[n];
       if (!maxLv || maxCount === 0) {
         const need = D.facilities[n].levels[0].rv;
-        return `<tr class="muted"><td>${facIco(n)}${n}</td><td class="num" colspan="2">unlocks at RV ${need}</td></tr>`;
+        return `<tr class="muted"><td>${facIco(n)}${N.fac(n)}</td><td class="num" colspan="2">${T("unlocks at RV {0}", need)}</td></tr>`;
       }
       const opts = D.facilities[n].levels.filter((l) => l.lv <= maxLv)
         .map((l) => `<option value="${l.lv}" ${l.lv === f.level ? "selected" : ""}>${l.lv}</option>`).join("");
       const tooMany = maxCount != null && f.count > maxCount;
-      return `<tr><td>${facIco(n)}${n}</td>
+      return `<tr><td>${facIco(n)}${N.fac(n)}</td>
         <td class="num"><input type="number" min="0" ${maxCount != null ? `max="${maxCount}"` : ""} data-fac="${n}" data-k="count" value="${f.count || 0}"
             ${tooMany ? 'style="border-color:var(--bad)"' : ""}> <span class="muted" style="font-size:11px">/${maxCount ?? "?"}</span></td>
         <td class="num"><select data-fac="${n}" data-k="level">${opts}</select> <span class="muted" style="font-size:11px">/${maxLv}</span></td></tr>`;
@@ -366,11 +375,11 @@
 
   function renderModules() {
     const L = P.rvLimits(D, S.rv);
-    $("modules").innerHTML = Object.keys(D.modules).sort().map((n) => {
+    $("modules").innerHTML = Object.keys(D.modules).sort(byName(N.mod)).map((n) => {
       const max = D.modules[n].length;
       const allowed = L.modules[n] || 0;
-      const opts = Array.from({ length: max + 1 }, (_, lv) => `<option value="${lv}" ${lv === (S.modules[n] || 0) ? "selected" : ""} ${lv > allowed ? "disabled" : ""}>${lv === 0 ? "none" : "Lv " + lv}${lv > allowed ? " (RV " + (D.modules[n][lv - 1] || {}).rv + ")" : ""}</option>`).join("");
-      return `<label class="row">${n} <select data-mod="${n}">${opts}</select></label>`;
+      const opts = Array.from({ length: max + 1 }, (_, lv) => `<option value="${lv}" ${lv === (S.modules[n] || 0) ? "selected" : ""} ${lv > allowed ? "disabled" : ""}>${lv === 0 ? T("none") : T("Lv {0}", lv)}${lv > allowed ? T(" (RV {0})", (D.modules[n][lv - 1] || {}).rv) : ""}</option>`).join("");
+      return `<label class="row">${N.mod(n)} <select data-mod="${n}">${opts}</select></label>`;
     }).join("");
     $("modules").querySelectorAll("[data-mod]").forEach((el) => {
       el.onchange = () => { S.modules[el.dataset.mod] = Number(el.value); renderRecipes(); recalc(); };
@@ -378,7 +387,7 @@
   }
 
   function renderDedicated() {
-    $("dedicated").innerHTML = FAC_NAMES.map((n) => `<label class="check"><input type="checkbox" data-ded="${n}" ${S.dedicated.includes(n) ? "checked" : ""}> ${n}</label>`).join("");
+    $("dedicated").innerHTML = FAC_NAMES.slice().sort(byName(N.fac)).map((n) => `<label class="check"><input type="checkbox" data-ded="${n}" ${S.dedicated.includes(n) ? "checked" : ""}> ${N.fac(n)}</label>`).join("");
     $("dedicated").querySelectorAll("[data-ded]").forEach((el) => {
       el.onchange = () => { const n = el.dataset.ded; S.dedicated = S.dedicated.filter((x) => x !== n); if (el.checked) S.dedicated.push(n); recalc(); };
     });
@@ -394,16 +403,17 @@
   }
 
   function renderUnreleased() {
-    const names = [...new Set((D.aniimo || []).map((a) => a.n))].sort();
+    const names = [...new Set((D.aniimo || []).map((a) => a.n))].sort(byName(N.species));
     const off = S.unreleased || [];
-    $("unreleasedSummary").textContent = off.length ? "Not out: " + off.join(", ") : "All Aniimo are in the game";
-    $("unreleased").innerHTML = names.map((n) => `<label class="check"><input type="checkbox" data-unreleased="${n}" ${off.includes(n) ? "checked" : ""}> ${n}</label>`).join("");
+    const summary = () => (S.unreleased && S.unreleased.length ? T("Not out: {0}", S.unreleased.map(N.species).join(", ")) : T("All Aniimo are in the game"));
+    $("unreleasedSummary").textContent = summary();
+    $("unreleased").innerHTML = names.map((n) => `<label class="check"><input type="checkbox" data-unreleased="${n}" ${off.includes(n) ? "checked" : ""}> ${N.species(n)}</label>`).join("");
     $("unreleased").querySelectorAll("[data-unreleased]").forEach((el) => {
       el.onchange = () => {
         const n = el.dataset.unreleased;
         S.unreleased = (S.unreleased || []).filter((x) => x !== n);
         if (el.checked) S.unreleased.push(n);
-        $("unreleasedSummary").textContent = S.unreleased.length ? "Not out: " + S.unreleased.join(", ") : "All Aniimo are in the game";
+        $("unreleasedSummary").textContent = summary();
         recalc();
       };
     });
@@ -413,7 +423,7 @@
   const pool = () => P.released(D, S.unreleased);
 
   function renderNotes() {
-    $("notes").innerHTML = D.notes.map((n) => `<label class="check"><input type="checkbox" data-note="${n}" ${S.notes.includes(n) ? "checked" : ""}> ${n}</label>`).join("");
+    $("notes").innerHTML = D.notes.slice().sort(byName(N.note)).map((n) => `<label class="check"><input type="checkbox" data-note="${n}" ${S.notes.includes(n) ? "checked" : ""}> ${N.note(n)}</label>`).join("");
     $("notes").querySelectorAll("[data-note]").forEach((el) => {
       el.onchange = () => { const n = el.dataset.note; S.notes = S.notes.filter((x) => x !== n); if (el.checked) S.notes.push(n); renderRecipes(); recalc(); };
     });
@@ -435,36 +445,37 @@
   let lastPlan = null;
   function renderRvInfo(res) {
     const c = P.rvChain(D, goalLevel());
-    if (!c) { $("rvInfo").innerHTML = '<div class="muted">RV 20 is the last level.</div>'; return; }
-    const name = (i) => (D.items[i] ? D.items[i].n : i);
-    const cur = c.cur === 1010 ? "Home Coin" : name(c.cur);
+    if (!c) { $("rvInfo").innerHTML = `<div class="muted">${T("RV 20 is the last level.")}</div>`; return; }
+    const name = N.item;
+    const cur = c.cur === 1010 ? T("Home Coin") : name(c.cur);
     const steps = c.steps.map((st) => `<div style="padding-left:${st.depth * 14}px">${itemIco(st.item)}<b>${fmt(st.qty)} ${name(st.item)}</b>
-      <span class="muted">= ${st.inputs.map(([i, q]) => fmt(q) + " " + name(i)).join(" + ")} on the ${st.fac[0]} (Lv ${st.fac[1]}+)</span></div>`).join("");
-    let out = `<div class="hint">RV ${c.level - 1} → ${c.level}: ${c.mats.map(([i, n]) => `${fmt(n)} ${name(i)}`).join(", ")},
-      ${fmt(c.coin)} ${cur}; the upgrade then takes ${fmt(c.secs / 3600, 1)} h.</div>${steps}
-      <div style="margin-top:4px">Raw material: ${c.raw.map(([i, q]) => `${itemIco(i)}<b>${fmt(q)}</b> ${name(i)}`).join(", ")}</div>`;
-    const dur = (h) => (!isFinite(h) ? "never" : h >= 48 ? fmt(h / 24, 1) + " days" : fmt(h, 1) + " h");
+      <span class="muted">${T("{0} = {1} on the {2} (Lv {3}+)", "", st.inputs.map(([i, q]) => fmt(q) + " " + name(i)).join(" + "), N.fac(st.fac[0]), st.fac[1]).trim()}</span></div>`).join("");
+    let out = `<div class="hint">${T("RV {0} → {1}: {2}, {3} {4}; the upgrade then takes {5} h.", c.level - 1, c.level,
+        c.mats.map(([i, n]) => `${fmt(n)} ${name(i)}`).join(", "), fmt(c.coin), cur, fmt(c.secs / 3600, 1))}</div>${steps}
+      <div style="margin-top:4px">${T("Raw material: {0}", c.raw.map(([i, q]) => `${itemIco(i)}<b>${fmt(q)}</b> ${name(i)}`).join(", "))}</div>`;
+    const dur = (h) => (!isFinite(h) ? T("never") : h >= 48 ? T("{0} days", fmt(h / 24, 1)) : T("{0} h", fmt(h, 1)));
     const f = res && res.fastRv;
     // fastest-upgrade plan: the chain is part of the plan (benches and Aniimo counted), so the time comes
     // straight from it
     const t = f ? null : P.rvTime(D, res, goalLevel(), !!S.bestPrismana);
     if (f && f.reachable) {
-      out += `<div style="margin-top:8px"><b>Fastest plan (the plan on this page):</b> ready to upgrade in <b>${dur(f.readyHours)}</b>,
-          then ${fmt(f.upgradeHours, 1)} h of upgrade: RV ${f.level} in <b>${dur(f.readyHours + f.upgradeHours)}</b>.</div>
-        <div class="muted">Makes per hour: ${f.perHour.map(([i, q]) => fmt(q, 1) + " " + name(i)).join(", ")}; sets aside
-          ${fmt(f.coinForUpgrade)} ${cur}/h of the ${fmt(res.coinPerHour)}/h it earns.</div>`;
+      out += `<div style="margin-top:8px"><b>${T("Fastest plan (the plan on this page):")}</b> ${T("ready to upgrade in {0}, then {1} h of upgrade: RV {2} in {3}.",
+          "<b>" + dur(f.readyHours) + "</b>", fmt(f.upgradeHours, 1), f.level, "<b>" + dur(f.readyHours + f.upgradeHours) + "</b>")}</div>
+        <div class="muted">${T("Makes per hour: {0}; sets aside {1} {2}/h of the {3}/h it earns.",
+          f.perHour.map(([i, q]) => fmt(q, 1) + " " + name(i)).join(", "), fmt(f.coinForUpgrade), cur, fmt(res.coinPerHour))}</div>`;
     } else if (f) {
-      out += `<div class="warn" style="margin-top:8px">This layout cannot make the RV ${f.level} materials.</div>`;
+      out += `<div class="warn" style="margin-top:8px">${T("This layout cannot make the RV {0} materials.", f.level)}</div>`;
     }
     if (t) {
-      const lines = t.mats.map((m) => `<div>${itemIco(m.item)}<b>${name(m.item)}</b>: ${m.blocked.length ? '<span class="warn">' + m.blocked.join("; ") + "</span>"
-        : `<b>${dur(m.hours)}</b> <span class="muted">(${m.raw.map((x) => `${fmt(x.need)} ${name(x.item)} at ${fmt(x.perHour)}/h = ${dur(x.hours)}`).join(", ")};
-          benches ${dur(m.benchHours)} with ${[...new Set(m.stages.map((st) => st.worker))].join(", ")})</span>`}</div>`).join("");
-      out += `<div style="margin-top:8px"><b>With this plan and the best Aniimo on the benches${S.personality ? " (personality matched, +20%)" : ""}:</b></div>${lines}
-        ${t.coinHours != null ? `<div>${fmt(t.coin)} ${cur}: <b>${dur(t.coinHours)}</b> <span class="muted">at ${fmt(res.coinPerHour)}/h</span></div>` : ""}
-        <div style="margin-top:4px">${isFinite(t.readyHours) ? `Ready to upgrade in <b>${dur(t.readyHours)}</b>, then ${fmt(t.upgradeHours, 1)} h of upgrade: RV ${t.level} in <b>${dur(t.totalHours)}</b>.`
-          : '<span class="warn">Not reachable with this plan: see above.</span>'}</div>
-        <div class="hint">Needs a free Aniimo for those benches; the plan's Aniimo count does not include them.</div>`;
+      const lines = t.mats.map((m) => `<div>${itemIco(m.item)}<b>${name(m.item)}</b>: ${m.blocked.length ? '<span class="warn">' + m.blocked.map(N.msg).join("; ") + "</span>"
+        : `<b>${dur(m.hours)}</b> <span class="muted">(${m.raw.map((x) => T("{0} at {1}/h = {2}", fmt(x.need) + " " + name(x.item), fmt(x.perHour), dur(x.hours))).join(", ")};
+          ${T("benches {0} with {1}", dur(m.benchHours), [...new Set(m.stages.map((st) => N.job(st.worker.replace(/ (\d)$/, " $1+")).replace(/\+$/, "")))].join(", "))})</span>`}</div>`).join("");
+      out += `<div style="margin-top:8px"><b>${T("With this plan and the best Aniimo on the benches{0}:", S.personality ? T(" (personality matched, +20%)") : "")}</b></div>${lines}
+        ${t.coinHours != null ? `<div>${fmt(t.coin)} ${cur}: <b>${dur(t.coinHours)}</b> <span class="muted">${T("at {0}/h", fmt(res.coinPerHour))}</span></div>` : ""}
+        <div style="margin-top:4px">${isFinite(t.readyHours) ? T("Ready to upgrade in {0}, then {1} h of upgrade: RV {2} in {3}.",
+            "<b>" + dur(t.readyHours) + "</b>", fmt(t.upgradeHours, 1), t.level, "<b>" + dur(t.totalHours) + "</b>")
+          : `<span class="warn">${T("Not reachable with this plan: see above.")}</span>`}</div>
+        <div class="hint">${T("Needs a free Aniimo for those benches; the plan's Aniimo count does not include them.")}</div>`;
     }
     $("rvInfo").innerHTML = out;
   }
@@ -472,7 +483,7 @@
   function renderKeep() {
     S.keep = S.keep || {};
     const pods = Object.entries(D.items).filter(([, it]) => /^Aniipod/.test(it.n)).sort((a, b) => a[0] - b[0]);
-    $("keep").innerHTML = pods.map(([i, it]) => `<label class="row"><span>${itemIco(i)}${it.n} per day</span>
+    $("keep").innerHTML = pods.map(([i]) => `<label class="row"><span>${itemIco(i)}${T("{0} per day", N.item(i))}</span>
       <input type="number" min="0" data-keep="${i}" value="${S.keep[i] ?? ""}" placeholder="0"></label>`).join("");
     $("keep").querySelectorAll("[data-keep]").forEach((el) => {
       el.oninput = () => { if (el.value === "" || Number(el.value) === 0) delete S.keep[el.dataset.keep]; else S.keep[el.dataset.keep] = Number(el.value); recalc(); };
@@ -485,8 +496,8 @@
     const off = new Set(S.disabledRecipes.map(Number));
     const byFac = {};
     for (const c of choices) for (const f of c.facilities) (byFac[f] = byFac[f] || []).push(c);
-    $("recipes").innerHTML = Object.keys(byFac).sort().map((f) => `<h3>${facIco(f)}${f}</h3>` + byFac[f].map((c) =>
-      `<label class="check"><input type="checkbox" data-rec="${c.id}" ${off.has(c.id) ? "" : "checked"}> ${makesHtml(c.id)}${c.note ? ' <span class="pill">note</span>' : ""}${!c.variant && c.mod ? ' <span class="pill">' + c.mod.join(" ") + "</span>" : ""}</label>`).join("")).join("");
+    $("recipes").innerHTML = Object.keys(byFac).sort(byName(N.fac)).map((f) => `<h3>${facIco(f)}${N.fac(f)}</h3>` + byFac[f].map((c) =>
+      `<label class="check"><input type="checkbox" data-rec="${c.id}" ${off.has(c.id) ? "" : "checked"}> ${makesHtml(c.id)}${c.note ? ` <span class="pill">${T("note")}</span>` : ""}${!c.variant && c.mod ? ' <span class="pill">' + N.mod(c.mod[0]) + " " + c.mod[1] + "</span>" : ""}</label>`).join("")).join("");
     $("recipes").querySelectorAll("[data-rec]").forEach((el) => {
       el.onchange = () => { const id = Number(el.dataset.rec); S.disabledRecipes = S.disabledRecipes.filter((x) => Number(x) !== id); if (!el.checked) S.disabledRecipes.push(id); recalc(); };
     });
@@ -528,27 +539,27 @@
     lastInputs = inp;
     const ms = performance.now() - t0;
 
-    $("warnings").innerHTML = (p.warnings || []).map((w) => `<div class="warn">${w}</div>`).join("");
+    $("warnings").innerHTML = (p.warnings || []).map((w) => `<div class="warn">${N.msg(w)}</div>`).join("");
     if (p.status !== "optimal") {
-      $("headline").textContent = "No plan";
-      $("subline").textContent = p.status;
+      $("headline").textContent = T("No plan");
+      $("subline").textContent = T(p.status);
       for (const id of ["lines", "sold", "eaten", "bought", "abilities", "devicesOut"]) $(id).innerHTML = "";
       $("budget").innerHTML = "";
       renderRvInfo(p);
       return;
     }
-    $("headline").textContent = fmt(p.coinPerHour) + " Home Coin / hour";
-    $("subline").textContent = fmt(p.coinPerDay) + " per day · solved in " + fmt(ms) + " ms (" + P.solverName() + ")";
+    $("headline").textContent = T("{0} Home Coin / hour", fmt(p.coinPerHour));
+    $("subline").textContent = T("{0} per day · solved in {1} ms ({2})", fmt(p.coinPerDay), fmt(ms), T(P.solverName()));
 
     const u = p.aniimo.used, pool = Math.max(p.aniimo.pool, 0.0001);
     const seg = (v, c) => `<span style="width:${Math.min(100, v / pool * 100)}%;background:${c}"></span>`;
-    $("budget").innerHTML = `<div class="row"><span>${fmt(p.aniimo.total, 1)} of ${fmt(p.aniimo.pool)} production Aniimo busy</span>
-      <span class="muted">cap ${p.aniimo.cap} − kept out ${p.aniimo.reserved} − haulers ${p.aniimo.haulers}</span></div>
+    $("budget").innerHTML = `<div class="row"><span>${T("{0} of {1} production Aniimo busy", fmt(p.aniimo.total, 1), fmt(p.aniimo.pool))}</span>
+      <span class="muted">${T("cap {0} − kept out {1} − haulers {2}", p.aniimo.cap, p.aniimo.reserved, p.aniimo.haulers)}</span></div>
       <div class="bar">${seg(u.dedicated, "var(--bar1)")}${seg(u.devices, "var(--bar4)")}${seg(u.bench, "var(--bar2)")}${seg(u.crop, "var(--bar3)")}</div>
-      <div class="legend"><span><i style="background:var(--bar1)"></i>locked facilities ${fmt(u.dedicated, 1)}</span>
-        <span><i style="background:var(--bar4)"></i>environment devices ${fmt(u.devices, 1)}</span>
-        <span><i style="background:var(--bar2)"></i>benches ${fmt(u.bench, 1)}</span>
-        <span><i style="background:var(--bar3)"></i>crop tasks ${fmt(u.crop, 1)}</span></div>`;
+      <div class="legend"><span><i style="background:var(--bar1)"></i>${T("locked facilities {0}", fmt(u.dedicated, 1))}</span>
+        <span><i style="background:var(--bar4)"></i>${T("environment devices {0}", fmt(u.devices, 1))}</span>
+        <span><i style="background:var(--bar2)"></i>${T("benches {0}", fmt(u.bench, 1))}</span>
+        <span><i style="background:var(--bar3)"></i>${T("crop tasks {0}", fmt(u.crop, 1))}</span></div>`;
 
     lastLines = p.lines;
     renderLines();
@@ -558,12 +569,15 @@
     const under = (d) => {
       const by = {};
       for (const l of p.lines) if (l.zone === zoneName(d)) by[l.facility] = (by[l.facility] || 0) + wholePlots.get(l);
-      return Object.entries(by).map(([f, n]) => n + " " + f).join(", ");
+      return Object.entries(by).map(([f, n]) => n + " " + N.fac(f)).join(", ");
     };
-    $("devicesOut").innerHTML = p.devices.map((d) => `<tr><td>${facIco(d.facility, true)}<b>${d.place}x ${d.facility}</b> on <b>${d.setting}</b>
-        <div class="muted" style="font-size:12px">${under(d)}: ${d.crops.join(", ")}</div></td>
-        <td class="num">${fmt(d.count, 2)} / ${d.max}</td><td class="muted">${d.worker}</td></tr>`).join("")
-      || `<tr><td class="muted">${S.devices === false ? "turned off" : "none worth placing"}</td></tr>`;
+    // the crops under a device, named from their recipes (the planner's own text is English)
+    const crops = (d) => [...new Set(p.lines.filter((l) => l.zone === zoneName(d))
+      .map((l) => recipeOf(l.recipeId).out.map(([i, q]) => N.item(i) + " x" + q).join(" + ")))].join(", ");
+    $("devicesOut").innerHTML = p.devices.map((d) => `<tr><td>${facIco(d.facility, true)}${T("{0}x {1} on {2}", "<b>" + d.place, N.fac(d.facility) + "</b>", "<b>" + T(d.setting) + "</b>")}
+        <div class="muted" style="font-size:12px">${under(d)}: ${crops(d)}</div></td>
+        <td class="num">${fmt(d.count, 2)} / ${d.max}</td><td class="muted">${N.job(d.worker)}</td></tr>`).join("")
+      || `<tr><td class="muted">${S.devices === false ? T("turned off") : T("none worth placing")}</td></tr>`;
     lastPlan = p;
     renderRvInfo(p);
     renderRest(p);
@@ -573,8 +587,9 @@
   // kept in this browser; default is Coin/h, highest first.
   let lastLines = [];
   const SORT_KEYS = {
-    facility: (l) => l.facility + " " + (l.zone || ""), count: (l) => l.count, makes: (l) => l.makes,
-    cycle: (l) => l.minutesPerCycle, coin: (l) => l.lineValue, worker: (l) => l.worker,
+    facility: (l) => N.fac(l.facility) + " " + (l.zone || ""), count: (l) => l.count,
+    makes: (l) => { const r = recipeOf(l.recipeId); return r ? N.item(r.out[0][0]) : ""; },
+    cycle: (l) => l.minutesPerCycle, coin: (l) => l.lineValue, worker: (l) => N.job(l.worker),
     perhour: (l) => l.cyclesPerHour,
   };
   S.sort = S.sort || { key: "coin", dir: -1 };
@@ -594,18 +609,18 @@
       if (whole.has(l)) {
         const w = whole.get(l);
         cycles = l.count > 0 ? l.cyclesPerHour / l.count * w : 0;   // output of the whole plots shown
-        many = `<b>${w}</b> <span class="muted" title="exact: ${fmt(l.count, 2)}">${w === 1 ? "plot" : "plots"}</span>`;
+        many = `<b>${w}</b> <span class="muted" title="${T("exact: {0}", fmt(l.count, 2))}">${w === 1 ? T("plot") : T("plots")}</span>`;
         if (l.kind === "dedicated") many = `<b>${w}</b>`;
       } else {
-        many = l.count >= 0.995 ? `<b>${fmt(l.count, 1)}</b>` : `<span title="exact: ${fmt(l.count, 2)}">busy <b>${fmt(l.count * 100)}%</b></span>`;
+        many = l.count >= 0.995 ? `<b>${fmt(l.count, 1)}</b>` : `<span title="${T("exact: {0}", fmt(l.count, 2))}">${T("busy {0}", "<b>" + fmt(l.count * 100) + "%</b>")}</span>`;
         // one recipe per bench: say how many benches are set to this recipe, then how busy they are
-        if (l.benches != null && l.count < l.benches - 0.005) many = `<b>${l.benches}</b> <span class="muted">${l.benches === 1 ? "bench" : "benches"}</span> · <span title="exact: ${fmt(l.count, 2)}">busy <b>${fmt(l.count / l.benches * 100)}%</b></span>`;
+        if (l.benches != null && l.count < l.benches - 0.005) many = `<b>${l.benches}</b> <span class="muted">${l.benches === 1 ? T("bench") : T("benches")}</span> · <span title="${T("exact: {0}", fmt(l.count, 2))}">${T("busy {0}", "<b>" + fmt(l.count / l.benches * 100) + "%</b>")}</span>`;
       }
       const perHour = r ? r.out.map(([i, n]) => `${itemIco(i)}${fmt(n * cycles, n * cycles < 10 ? 1 : 0)}`).join(" ") : "";
-      return `<tr><td>${facIco(l.facility, true)}${l.facility}${l.zone ? ' <span class="pill">' + l.zone + "</span>" : ""}</td>
-      <td class="num" style="white-space:nowrap">${many}</td><td>${makesHtml(l.recipeId)}${l.note ? ' <span class="pill">note</span>' : ""}</td>
+      return `<tr><td>${facIco(l.facility, true)}${N.fac(l.facility)}${l.zone ? ' <span class="pill">' + N.zone(l.zone) + "</span>" : ""}</td>
+      <td class="num" style="white-space:nowrap">${many}</td><td>${makesHtml(l.recipeId)}${l.note ? ` <span class="pill">${T("note")}</span>` : ""}</td>
       <td class="num" style="white-space:nowrap">${perHour}</td>
-      <td class="num">${fmt(l.minutesPerCycle, 1)} min</td><td class="num">${fmt(l.lineValue)}</td><td class="muted">${l.worker}</td></tr>`;
+      <td class="num">${T("{0} min", fmt(l.minutesPerCycle, 1))}</td><td class="num">${fmt(l.lineValue)}</td><td class="muted">${N.job(l.worker)}</td></tr>`;
     }).join("");
   }
   document.addEventListener("click", (e) => {
@@ -634,34 +649,35 @@
   });
 
   function renderRest(p) {
-    const keptHtml = (p.kept || []).map((k) => `<tr><td>${itemIco(k.id)}${k.item} <span class="pill">keep</span></td><td class="num">${fmt(k.perDay, 1)}/day</td><td></td></tr>`).join("");
-    $("sold").innerHTML = keptHtml + p.sold.map((s) => `<tr><td>${itemIco(s.id)}${s.item}</td><td class="num">${fmt(s.perHour, 1)}</td><td class="num">${fmt(s.coin)}</td></tr>`).join("") || `<tr><td class="muted">nothing</td></tr>`;
-    $("eaten").innerHTML = (p.eaten.length ? `<tr><td colspan="3" class="muted">Each item fed lasts about ${fmt(p.food.hoursPerItem * 60)} min for ${fmt(p.food.eaters)} Aniimo · a stack of 99 about ${fmt(p.food.hoursPerItem * 99, 1)} h</td></tr>` : "") + p.eaten.map((e) => `<tr><td>${itemIco(e.id)}${e.item}</td><td class="num">${fmt(e.perHour, 1)}</td><td class="num muted">${fmt(e.food)} food</td></tr>`).join("")
-      || `<tr><td class="muted">${S.feed ? "nothing" : "food planning is off"}</td></tr>`;
-    $("bought").innerHTML = p.bought.map((b) => `<tr><td>${itemIco(b.id)}${b.item}</td><td class="num">${fmt(b.perHour, 1)}</td><td class="num">${fmt(b.coin)} coin</td></tr>`).join("") || `<tr><td class="muted">nothing</td></tr>`;
+    const keptHtml = (p.kept || []).map((k) => `<tr><td>${itemIco(k.id)}${N.item(k.id)} <span class="pill">${T("keep")}</span></td><td class="num">${T("{0}/day", fmt(k.perDay, 1))}</td><td></td></tr>`).join("");
+    $("sold").innerHTML = keptHtml + p.sold.map((s) => `<tr><td>${itemIco(s.id)}${N.item(s.id)}</td><td class="num">${fmt(s.perHour, 1)}</td><td class="num">${fmt(s.coin)}</td></tr>`).join("") || `<tr><td class="muted">${T("nothing")}</td></tr>`;
+    $("eaten").innerHTML = (p.eaten.length ? `<tr><td colspan="3" class="muted">${T("Each item fed lasts about {0} min for {1} Aniimo · a stack of 99 about {2} h", fmt(p.food.hoursPerItem * 60), fmt(p.food.eaters), fmt(p.food.hoursPerItem * 99, 1))}</td></tr>` : "")
+      + p.eaten.map((e) => `<tr><td>${itemIco(e.id)}${N.item(e.id)}</td><td class="num">${fmt(e.perHour, 1)}</td><td class="num muted">${T("{0} food", fmt(e.food))}</td></tr>`).join("")
+      || `<tr><td class="muted">${S.feed ? T("nothing") : T("food planning is off")}</td></tr>`;
+    $("bought").innerHTML = p.bought.map((b) => `<tr><td>${itemIco(b.id)}${N.item(b.id)}</td><td class="num">${fmt(b.perHour, 1)}</td><td class="num">${T("{0} coin", fmt(b.coin))}</td></tr>`).join("") || `<tr><td class="muted">${T("nothing")}</td></tr>`;
     const lettersFor = (worker) => {
       const m = {};
       for (const l of p.lines) if (l.worker === worker && l.mbti) (m[l.mbti] = m[l.mbti] || new Set()).add(l.facility);
-      return Object.entries(m).map(([k, f]) => `<span class="pill">${k}</span> ${[...f].join(", ")}`).join(" · ");
+      return Object.entries(m).map(([k, f]) => `<span class="pill">${k}</span> ${[...f].map(N.fac).join(", ")}`).join(" · ");
     };
-    const abTitle = (a) => Object.entries(a.ab).map(([k, v]) => k + " " + v).join(", ");
-    const aniName = (a) => `<span title="${abTitle(a)}">${aniIco(a)}${a.n}${a.prismana ? ' <span class="pill">Prismana</span>'
-      : ' <span class="muted">(' + P.formLabel(a) + ")</span>"}</span>`;
+    const abTitle = (a) => Object.entries(a.ab).map(([k, v]) => N.ab(k) + " " + v).join(", ");
+    const aniName = (a) => `<span title="${abTitle(a)}">${aniIco(a)}${N.ani(a)}${a.prismana ? ' <span class="pill">Prismana</span>'
+      : ' <span class="muted">(' + formLabel(a) + ")</span>"}</span>`;
     // "+N more" opens in place (user: it did nothing before)
     const moreList = (parts, n, sep) => parts.length <= n ? parts.join(sep)
-      : parts.slice(0, n).join(sep) + `<details class="more"><summary>+${parts.length - n} more</summary>${parts.slice(n).join(sep)}</details>`;
+      : parts.slice(0, n).join(sep) + `<details class="more"><summary>${T("+{0} more", parts.length - n)}</summary>${parts.slice(n).join(sep)}</details>`;
     const who = (worker) => {
       const j = P.parseJob(D, worker);
       if (!j) return "";
       const list = P.candidates(pool(), j.ab, j.lv, S.bestPrismana, j.fam);
-      return moreList(list.map((a) => aniName(a).replace("</span>", ` <b>${a.ab[j.ab]}</b></span>`)), 10, ", ");
+      return moreList(list.map((a) => aniName(a).replace(/<\/span>$/, ` <b>${a.ab[j.ab]}</b></span>`)), 10, ", ");
     };
     const altHtml = (m, res) => {
       const alts = P.alternatives(pool(), m, !!S.bestPrismana, res && res.abilityLevels, res && res.familyLevels);
-      if (!alts.length) return '<span class="muted">none: only this Aniimo does all these jobs</span>';
+      if (!alts.length) return `<span class="muted">${T("none: only this Aniimo does all these jobs")}</span>`;
       const jobsAb = [...new Set(m.jobs.map((j) => j.job.split(" ")[0]))];
-      return moreList(alts.map((a) => `${aniName(a)} <span class="muted">${jobsAb.map((ab) => ab + " " + (a.ab[ab] || 0)).join(", ")}
-        · ${Object.keys(a.ab).length} abilities</span>`), 6, "<br>");
+      return moreList(alts.map((a) => `${aniName(a)} <span class="muted">${jobsAb.map((ab) => N.ab(ab) + " " + (a.ab[ab] || 0)).join(", ")}
+        · ${T("{0} abilities", Object.keys(a.ab).length)}</span>`), 6, "<br>");
     };
     const rosterHtml = (res, title) => {
       const R = P.roster(pool(), res, !!S.bestPrismana);
@@ -669,23 +685,23 @@
         const ip = P.idealPersonality(res, m);
         const alts = P.alternatives(pool(), m, !!S.bestPrismana, res && res.abilityLevels, res && res.familyLevels);
         const work = m.jobs.reduce((acc, j) => acc + j.load, 0);
-        return `<tr><td style="white-space:nowrap" data-v="${m.aniimo.n}">${m.count}x <b>${aniIco(m.aniimo, true)}${m.aniimo.n}</b>${m.aniimo.prismana ? ' <span class="pill">Prismana</span>' : ""}
-          <div class="muted" style="font-size:12px">${m.aniimo.fn || "Basic Form"}</div></td>
+        return `<tr><td style="white-space:nowrap" data-v="${N.ani(m.aniimo)}">${m.count}x <b>${aniIco(m.aniimo, true)}${N.ani(m.aniimo)}</b>${m.aniimo.prismana ? ' <span class="pill">Prismana</span>' : ""}
+          <div class="muted" style="font-size:12px">${N.form(m.aniimo.form, m.aniimo.fn || "Basic Form")}</div></td>
           <td class="muted" data-v="${Object.keys(m.aniimo.ab).length * 100 + Object.values(m.aniimo.ab).reduce((a, b) => a + b, 0)}">${abTitle(m.aniimo)}</td>
-          <td data-v="${work * m.count}">${m.jobs.map((j) => j.job + (m.count === 1 && j.load < 0.995 ? " (" + fmt(j.load * 100) + "%)" : "")).join(" · ")}</td>
-          <td data-v="${ip.share}">${!Object.keys(ip.help).length ? '<span class="muted">any (no bench bonus for these jobs)</span>'
-            : `<b style="letter-spacing:.08em">${ip.code}</b><div class="muted" style="font-size:12px">${Object.entries(ip.help).map(([k, f]) => k + ": " + f.join(", ")).join(" · ")}
-              · +20% on ${fmt(ip.share * 100)}% of its work</div>`}</td>
+          <td data-v="${work * m.count}">${m.jobs.map((j) => N.job(j.job) + (m.count === 1 && j.load < 0.995 ? " (" + fmt(j.load * 100) + "%)" : "")).join(" · ")}</td>
+          <td data-v="${ip.share}">${!Object.keys(ip.help).length ? `<span class="muted">${T("any (no bench bonus for these jobs)")}</span>`
+            : `<b style="letter-spacing:.08em">${ip.code}</b><div class="muted" style="font-size:12px">${Object.entries(ip.help).map(([k, f]) => k + ": " + f.map(N.fac).join(", ")).join(" · ")}
+              · ${T("+20% on {0}% of its work", fmt(ip.share * 100))}</div>`}</td>
           <td style="font-size:12px" data-v="${alts.length}">${altHtml(m, res)}</td></tr>`;
       }).join("");
-      return `<div class="hint" style="margin-top:6px"><b>${title || "Suggested roster"}: ${R.total} Aniimo.</b> Click a column to sort.</div>
-        <table class="sortable"><thead><tr><th data-type="text">Aniimo</th><th data-type="num">Jobs it can do</th><th data-type="num">Works on</th>
-        <th data-type="num">Ideal personality</th><th data-type="num">Alternatives</th></tr></thead><tbody>${rows}</tbody></table>`
-        + (R.uncovered.length ? `<div class="warn">No Aniimo can do: ${R.uncovered.join(", ")}</div>` : "");
+      return `<div class="hint" style="margin-top:6px"><b>${T("{0}: {1} Aniimo.", title || T("Suggested roster"), R.total)}</b> ${T("Click a column to sort.")}</div>
+        <table class="sortable"><thead><tr><th data-type="text">${T("Aniimo")}</th><th data-type="num">${T("Jobs it can do")}</th><th data-type="num">${T("Works on")}</th>
+        <th data-type="num">${T("Ideal personality")}</th><th data-type="num">${T("Alternatives")}</th></tr></thead><tbody>${rows}</tbody></table>`
+        + (R.uncovered.length ? `<div class="warn">${T("No Aniimo can do: {0}", R.uncovered.map(N.job).join(", "))}</div>` : "");
     };
     window.__rosterHtml = rosterHtml;
     $("abilities").innerHTML = Object.entries(p.abilityNeeds).sort((a, b) => b[1] - a[1])
-      .map(([k, v]) => `<tr><td style="white-space:nowrap" data-v="${k}"><b>${k}</b></td><td class="num" data-v="${v}">${Math.ceil(v - 1e-6)}</td>
+      .map(([k, v]) => `<tr><td style="white-space:nowrap" data-v="${N.job(k)}"><b>${N.job(k)}</b></td><td class="num" data-v="${v}">${Math.ceil(v - 1e-6)}</td>
         <td data-v="${((j) => j ? P.candidates(pool(), j.ab, j.lv, S.bestPrismana, j.fam).length : 0)(P.parseJob(D, k))}">${who(k)}<div class="muted" style="font-size:12px">${lettersFor(k)}</div></td></tr>`).join("");
     $("roster").innerHTML = rosterHtml(p);
     renderBest(p);
@@ -696,21 +712,21 @@
   function renderBest(current) {
     if (!lastInputs) return;
     const b = P.bestCase(D, lastInputs, !!S.bestPrismana);
-    if (b.status !== "optimal") { $("best").innerHTML = `<div class="muted">No best-case plan: ${b.status}</div>`; return; }
+    if (b.status !== "optimal") { $("best").innerHTML = `<div class="muted">${T("No best-case plan: {0}", T(b.status))}</div>`; return; }
     const gain = b.coinPerHour - current.coinPerHour;
     const rows = Object.entries(b.abilityNeeds).sort((x, y) => y[1] - x[1]).map(([k, v]) => {
       const m = P.parseJob(D, k);
       const ab = m ? m.ab : k, lv = m ? (m.fam ? b.familyLevels[m.fam] : b.abilityLevels[ab]) : null;
       const top = m ? P.candidates(pool(), ab, lv, !!S.bestPrismana, m.fam).slice(0, 6)
-        .map((a) => a.n + (a.prismana ? ' <span class="pill">Prismana</span>' : ' <span class="muted">(' + P.formLabel(a) + ")</span>")).join(", ") : "";
-      return `<tr><td style="white-space:nowrap"><b>${k}</b></td><td class="num">${Math.ceil(v - 1e-6)}</td>
-        <td>level <b>${lv ?? "-"}</b>: ${top}</td></tr>`;
+        .map((a) => N.ani(a) + (a.prismana ? ' <span class="pill">Prismana</span>' : ' <span class="muted">(' + formLabel(a) + ")</span>")).join(", ") : "";
+      return `<tr><td style="white-space:nowrap"><b>${N.job(k)}</b></td><td class="num">${Math.ceil(v - 1e-6)}</td>
+        <td>${T("level {0}", "<b>" + (lv ?? "-") + "</b>")}: ${top}</td></tr>`;
     }).join("");
-    $("best").innerHTML = `<div class="row"><span><b>${fmt(b.coinPerHour)}</b> Home Coin / hour with the best Aniimo
-        (${fmt(b.coinPerDay)} / day)</span><span class="${gain > 0 ? "" : "muted"}">${gain >= 0 ? "+" : ""}${fmt(gain)} / hour vs your current plan</span></div>
-      <div class="hint">Same facilities, RV and options; every job gets the highest ability level that exists
-        ${S.bestPrismana ? "(Prismana forms included)" : "(without Prismana forms)"}, with a matching personality.</div>
-      <table><tbody>${rows}</tbody></table>` + window.__rosterHtml(b, "Best-case roster");
+    $("best").innerHTML = `<div class="row"><span>${T("{0} Home Coin / hour with the best Aniimo", "<b>" + fmt(b.coinPerHour) + "</b>")}
+        ${T("({0} / day)", fmt(b.coinPerDay))}</span><span class="${gain > 0 ? "" : "muted"}">${T("{0} / hour vs your current plan", (gain >= 0 ? "+" : "") + fmt(gain))}</span></div>
+      <div class="hint">${T("Same facilities, RV and options; every job gets the highest ability level that exists {0}, with a matching personality.",
+        S.bestPrismana ? T("(Prismana forms included)") : T("(without Prismana forms)"))}</div>
+      <table><tbody>${rows}</tbody></table>` + window.__rosterHtml(b, T("Best-case roster"));
   }
 
   function renderAll() {
@@ -723,7 +739,16 @@
     recalc();
   }
 
-  $("buildInfo").textContent = "Game data build " + D.build + " · runs entirely on this PC";
+  const buildInfo = () => { $("buildInfo").textContent = T("Game data build {0} · runs entirely on this PC", D.build); };
+  window.I18N.translatePage(document.body);
+  buildInfo();
+  const langSel = $("lang");
+  langSel.value = window.I18N.lang();
+  langSel.onchange = () => {
+    window.I18N.setLang(langSel.value);
+    window.I18N.translatePage(document.body);
+    buildInfo(); buildRv(); renderAll();
+  };
   buildRv();
   renderAll();
 })();

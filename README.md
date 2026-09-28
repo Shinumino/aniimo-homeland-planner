@@ -6,11 +6,13 @@ need for each job, and how long until your next RV upgrade.
 
 ## How to use it
 
-1. Download this repository (green **Code** button, then **Download ZIP**) and unzip it.
-2. Open `index.html` in your browser.
+Open it in your browser: **https://shinumino.github.io/aniimo-homeland-planner/**
 
-Nothing to install and no internet needed. Everything runs on your own PC, and your settings are
-kept in your browser.
+Or use it offline: download this repository (green **Code** button, then **Download ZIP**), unzip it
+and open `index.html`.
+
+Nothing to install. The planning runs in your browser on your own PC (nothing is sent anywhere), and
+your settings are kept in your browser.
 
 ## What it does
 
@@ -31,7 +33,9 @@ kept in your browser.
 - No game art is included.
 - This is a fan-made tool. It is not affiliated with or endorsed by the makers of Aniimo.
 
-## Credits
+## License and credits
+
+MIT license, see `LICENSE`.
 
 The optimizer uses [HiGHS](https://highs.dev/) through
 [highs-js](https://github.com/lovasoa/highs-js) (MIT license, see `vendor/HIGHS-JS-LICENSE`).

@@ -109,6 +109,7 @@
 
     // ---- text built by the page ({0}, {1}... are filled in)
     "Language": "Idioma",
+    "RV {0}: {1} in the home + {2} in the RV Park (Signal Transmitter) = {3}": "Motorhome {0}: {1} no Lar + {2} no Estacionamento do Motorhome (Transmissor de Sinal) = {3}",
     "RV {0}": "Motorhome {0}",
     "unlocks at RV {0}": "libera no Motorhome {0}",
     "none": "nenhum",

@@ -105,6 +105,7 @@
     <section class="panel">
       <h2>Aniimo</h2>
       <label class="row">Aniimo cap in your home <input type="number" id="cap" min="0"></label>
+      <div class="hint" id="capHint"></div>
       <label class="row">Kept out of production (e.g. star farming) <input type="number" id="reserved" min="0"></label>
       <label class="row">Haulers (Hauling ability) <input type="number" id="haulers" min="0"></label>
       <label class="row">Aniimo that eat (blank = cap) <input type="number" id="homeAniimo" min="0"></label>
@@ -322,6 +323,7 @@
         if (L.counts[n] != null) f.count = L.counts[n];
       }
       Object.assign(S.modules, L.modules);
+      S.cap = capFor();
       if (S.rvGoal && Number(S.rvGoal.level) <= S.rv) S.rvGoal.level = "";   // back to "the next one"
       renderAll();
     };
@@ -333,9 +335,15 @@
         if (L.counts[n] != null) f.count = L.counts[n];
       }
       Object.assign(S.modules, L.modules);
+      S.cap = capFor();
       renderAll();
     };
   }
+  // Aniimo cap = home places for the RV + RV Park places from the Signal Transmitter's level
+  // (user, 2026-09-28: the cap did not change with the RV; the game shows 32 at RV 11 = 30 + 2)
+  const capParts = () => [D.rvCaps[S.rv] || 0, (D.parkCap || {})[S.modules["Signal Transmitter"] || 0] || 0];
+  const capFor = () => capParts()[0] + capParts()[1];
+  const capHint = () => { const [home, park] = capParts(); $("capHint").textContent = T("RV {0}: {1} in the home + {2} in the RV Park (Signal Transmitter) = {3}", S.rv, home, park, home + park); };
 
   function bindNumber(id, key) {
     const el = $(id);
@@ -382,7 +390,11 @@
       return `<label class="row">${N.mod(n)} <select data-mod="${n}">${opts}</select></label>`;
     }).join("");
     $("modules").querySelectorAll("[data-mod]").forEach((el) => {
-      el.onchange = () => { S.modules[el.dataset.mod] = Number(el.value); renderRecipes(); recalc(); };
+      el.onchange = () => {
+        S.modules[el.dataset.mod] = Number(el.value);
+        if (el.dataset.mod === "Signal Transmitter") { S.cap = capFor(); $("cap").value = S.cap; capHint(); }
+        renderRecipes(); recalc();
+      };
     });
   }
 
@@ -735,6 +747,7 @@
     for (const [id, key] of [["cap", "cap"], ["reserved", "reserved"], ["haulers", "haulers"], ["homeAniimo", "homeAniimo"], ["minFoodPerItem", "minFoodPerItem"], ["cropOpOverhead", "cropOpOverhead"]]) bindNumber(id, key);
     const wl = $("workerMaxLevel"); wl.value = String(S.workerMaxLevel || 3); wl.onchange = () => { S.workerMaxLevel = Number(wl.value); recalc(); };
     for (const [id, key] of [["personality", "personality"], ["watered", "watered"], ["oneRecipePerBench", "oneRecipePerBench"], ["feed", "feed"], ["eventSeeds", "eventSeeds"], ["bestPrismana", "bestPrismana"]]) bindCheck(id, key);
+    capHint();
     renderFacilities(); renderModules(); renderDedicated(); renderDevices(); renderNotes(); renderUnreleased(); renderKeep(); renderRvGoal(); renderRecipes();
     recalc();
   }

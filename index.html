@@ -1,0 +1,732 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aniimo Homeland Planner</title>
+<style>
+  :root {
+    --bg: #f6f5f1; --panel: #ffffff; --ink: #1f2328; --muted: #6a6f76; --line: #e3e1da;
+    --accent: #2f7d5b; --accent-soft: #e3f1ea; --warn: #9a5b00; --warn-soft: #fff3dc; --bad: #b3261e;
+    --bar1: #2f7d5b; --bar2: #5a8fd6; --bar3: #d6a23a; --bar4: #9b6ad6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #16181b; --panel: #1f2226; --ink: #e8e6e1; --muted: #9aa0a6; --line: #30343a;
+      --accent: #5cc095; --accent-soft: #1f3a2f; --warn: #f0b451; --warn-soft: #3a2f1a; --bad: #ff8a80;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #16181b; --panel: #1f2226; --ink: #e8e6e1; --muted: #9aa0a6; --line: #30343a;
+    --accent: #5cc095; --accent-soft: #1f3a2f; --warn: #f0b451; --warn-soft: #3a2f1a; --bad: #ff8a80;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 system-ui, "Segoe UI", sans-serif; }
+  header { display: flex; flex-wrap: wrap; gap: 12px; align-items: baseline; justify-content: space-between;
+           padding: 14px 20px; border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 2; }
+  header h1 { font-size: 17px; margin: 0; }
+  header .headline { font-size: 22px; font-weight: 650; color: var(--accent); font-variant-numeric: tabular-nums; }
+  header .sub { color: var(--muted); font-size: 12px; }
+  main { display: grid; grid-template-columns: minmax(300px, 400px) 1fr; gap: 16px; padding: 16px 20px 40px; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; padding: 12px 16px 40px; } }
+  section.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin-bottom: 12px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 8px; }
+  details > summary { cursor: pointer; font-weight: 600; margin: 2px 0; }
+  label.row, .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 4px 0; }
+  label.check { display: flex; gap: 6px; align-items: center; margin: 3px 0; }
+  input[type=number], select, input[type=text] { width: 76px; padding: 3px 6px; border: 1px solid var(--line); border-radius: 6px;
+    background: var(--bg); color: var(--ink); font: inherit; }
+  input[type=text] { width: 120px; }
+  .hint { color: var(--muted); font-size: 12px; margin: 4px 0 8px; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 5px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; }
+  td.num, th.num { text-align: right; }
+  .fac-table td { padding: 3px 4px; }
+  .fac-table input, .fac-table select { width: 52px; }
+  .warn { background: var(--warn-soft); color: var(--warn); border-radius: 8px; padding: 8px 10px; margin: 0 0 10px; }
+  .bar { display: flex; height: 14px; border-radius: 7px; overflow: hidden; background: var(--line); margin: 6px 0; }
+  .bar span { display: block; height: 100%; }
+  .legend { display: flex; flex-wrap: wrap; gap: 10px; font-size: 12px; color: var(--muted); }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+  .pill { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 10px; background: var(--accent-soft); color: var(--accent); margin-left: 4px; }
+  .muted { color: var(--muted); }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 1200px) { .grid2 { grid-template-columns: 1fr; } }
+  button { font: inherit; padding: 4px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); cursor: pointer; }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .recipes { max-height: 360px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; }
+  .recipes h3 { font-size: 12px; margin: 8px 0 2px; color: var(--muted); }
+  .zone-row { display: grid; grid-template-columns: 1fr 64px 52px 58px 58px 26px; gap: 6px; align-items: center; margin: 4px 0; }
+  .zone-row input, .zone-row select { width: 100%; }
+  .tablewrap { overflow-x: auto; }
+  th[data-sort], table.sortable th { cursor: pointer; user-select: none; white-space: nowrap; }
+  table.sortable th:hover { color: var(--ink); }
+  table.sortable th::after { content: attr(data-arrow); margin-left: 4px; font-size: 10px; }
+  details.more { display: inline; }
+  details.more > summary { display: inline; cursor: pointer; color: var(--accent); list-style: none; }
+  details.more > summary::-webkit-details-marker { display: none; }
+  details.more[open] > summary { display: block; margin-bottom: 2px; }
+  th[data-sort]:hover { color: var(--ink); }
+  th[data-sort]::after { content: attr(data-arrow); margin-left: 4px; font-size: 10px; }
+  img.ico { width: 24px; height: 24px; vertical-align: middle; margin-right: 6px; object-fit: contain; }
+  img.ico.big { width: 32px; height: 32px; }
+  img.ico.g { background: #3b4048; border-radius: 6px; padding: 2px; }
+  .makes { display: inline-flex; align-items: center; gap: 2px; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Aniimo Homeland Planner</h1>
+    <div class="sub" id="buildInfo"></div>
+  </div>
+  <div style="text-align:right">
+    <div class="headline" id="headline">…</div>
+    <div class="sub" id="subline"></div>
+  </div>
+</header>
+
+<main>
+  <div id="inputs">
+    <section class="panel">
+      <h2>Your RV</h2>
+      <label class="row">RV level
+        <select id="rv"></select></label>
+      <div class="hint">Changing the RV sets every limit below to what that RV allows. Everything stays editable.</div>
+      <div class="row">
+        <button id="applyMax">Fill everything to this RV's max (counts too)</button>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Aniimo</h2>
+      <label class="row">Aniimo cap in your home <input type="number" id="cap" min="0"></label>
+      <label class="row">Kept out of production (e.g. star farming) <input type="number" id="reserved" min="0"></label>
+      <label class="row">Haulers (Hauling ability) <input type="number" id="haulers" min="0"></label>
+      <label class="row">Aniimo that eat (blank = cap) <input type="number" id="homeAniimo" min="0"></label>
+      <label class="row">Only feed food worth at least (per item) <input type="number" id="minFoodPerItem" min="0" step="1000"></label>
+      <div class="hint">Energy Bites give 1,000; cooked dishes like Soy Sauce Fried Rice give ~45,000, so you refill far less often.</div>
+      <label class="row">Your Aniimo's ability level goes up to
+        <select id="workerMaxLevel"><option value="1">Level 1</option><option value="2">Level 2 and below</option>
+          <option value="3">Level 3 and below</option><option value="4">Level 4 and below</option></select></label>
+      <div class="hint">Each job gets your best Aniimo. A job that needs a higher level still runs, just slower;
+        on many benches one level above the requirement works 3x faster.</div>
+      <label class="check"><input type="checkbox" id="personality"> Assume every worker's personality matches its bench (+20%)</label>
+      <details><summary>Facilities that lock an Aniimo full time</summary>
+        <div id="dedicated"></div>
+        <div class="hint">These keep their Aniimo until the output is full, so each one uses a whole Aniimo.</div>
+      </details>
+    </section>
+
+    <section class="panel">
+      <h2>Facilities</h2>
+      <div class="hint">How many of each you have and their level. "/N" is the most your RV allows.</div>
+      <div class="tablewrap"><table class="fac-table"><thead><tr><th>Facility</th><th class="num">Count</th><th class="num">Level</th></tr></thead>
+        <tbody id="facilities"></tbody></table></div>
+    </section>
+
+    <section class="panel">
+      <h2>RV modules</h2>
+      <div id="modules"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Environment devices</h2>
+      <label class="check"><input type="checkbox" id="devices"> Let the planner place Heat Furnaces, Cooling Units and Sunlamps</label>
+      <div class="hint">It picks how many (up to your RV's limit), the setting, and which crops go under them.
+        Plots one device covers is an estimate from the game's sizes (9 x 9 range): check it in game and correct it here.</div>
+      <label class="row">Farmland plots under one device <input type="number" id="coverFarmland" min="0"></label>
+      <label class="row">Woodland plots under one device <input type="number" id="coverWoodland" min="0"></label>
+    </section>
+
+    <section class="panel">
+      <h2>Options</h2>
+      <label class="check"><input type="checkbox" id="oneRecipePerBench"> One recipe per bench (set it and leave it). Untick if you switch bench recipes by hand</label>
+      <label class="check"><input type="checkbox" id="watered"> Crops are watered (−5 min per growth stage; needs a free Water Aniimo)</label>
+      <label class="check"><input type="checkbox" id="feed"> Plan food for the Aniimo (unfed Aniimo work at 20% speed)</label>
+      <label class="check"><input type="checkbox" id="eventSeeds"> Event seeds can be bought</label>
+      <label class="row">Walking time per crop task (min) <input type="number" id="cropOpOverhead" step="0.1" min="0"></label>
+    </section>
+
+    <section class="panel">
+      <h2>Recipe Notes you own</h2>
+      <div id="notes"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Not in the game yet</h2>
+      <div class="hint">Ticked Aniimo are never planned, listed or suggested. Untick one when it comes out.</div>
+      <details><summary id="unreleasedSummary"></summary><div id="unreleased"></div></details>
+    </section>
+
+    <section class="panel">
+      <h2>Make for yourself</h2>
+      <div class="hint">Things you want to keep, not sell. The plan sets aside the Mine and Maker time to make them,
+        then earns as much as it can with the rest.</div>
+      <div id="keep"></div>
+      <label class="check"><input type="checkbox" id="moonrayWheat"> I have Moonray Wheat to buy event seeds
+        (Moondew Radish, Waxing Moon Pepper)</label>
+    </section>
+
+    <section class="panel">
+      <h2>Next RV level</h2>
+      <label class="row">Upgrade to RV <select id="rvGoalLevel"></select></label>
+      <label class="check"><input type="checkbox" id="fastRv"> Plan for the fastest upgrade (instead of the most coin)</label>
+      <div id="rvInfo"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Recipes you have</h2>
+      <div class="hint">Everything your facilities, modules and notes allow. Untick what you don't have.</div>
+      <div class="row"><button id="allOn">Tick all</button><button id="allOff">Untick all</button></div>
+      <div class="recipes" id="recipes"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Save & share</h2>
+      <div class="row">
+        <button id="export">Save setup to file</button>
+        <label><button id="importBtn" type="button">Load setup file</button><input type="file" id="import" accept=".json" hidden></label>
+      </div>
+      <div class="row"><button id="reset">Reset to defaults</button></div>
+      <div class="hint">Your setup is also remembered in this browser.</div>
+    </section>
+  </div>
+
+  <div id="results">
+    <div id="warnings"></div>
+    <section class="panel">
+      <h2>Aniimo budget</h2>
+      <div id="budget"></div>
+    </section>
+    <section class="panel">
+      <h2>The plan</h2>
+      <div class="hint">How many of each facility to set to each recipe. Crops and locked facilities are whole plots
+        (they add up to what you have); a bench used part of the time shows how busy it is.</div>
+      <div class="tablewrap"><table><thead><tr><th data-sort="facility">Facility</th><th class="num" data-sort="count">How many</th>
+        <th data-sort="makes">Makes each cycle</th><th class="num" data-sort="perhour">Per hour</th><th class="num" data-sort="cycle">Cycle</th>
+        <th class="num" data-sort="coin">Coin/h</th><th data-sort="worker">Worker</th></tr></thead>
+        <tbody id="lines"></tbody></table></div>
+    </section>
+    <div class="grid2">
+      <section class="panel"><h2>Environment devices to place</h2><table><tbody id="devicesOut"></tbody></table>
+        <div class="hint">A fraction means the devices are not fully used.</div></section>
+      <section class="panel"><h2>Sell per hour</h2><table><tbody id="sold"></tbody></table></section>
+      <section class="panel" style="grid-column: 1 / -1"><h2>Aniimo you need</h2><table class="sortable"><thead><tr><th data-type="text">Job</th><th class="num" data-type="num">Full time</th>
+        <th data-type="num">Aniimo that can do it</th></tr></thead><tbody id="abilities"></tbody></table>
+        <div class="hint">Full-time workers per job type, and the Aniimo that can do it (best level first; a level above
+          the requirement is much faster on many benches). The letter is the personality that gives +20% on that bench.
+          Crop work (planting, watering, harvest) is shared by the rest of your Aniimo.</div></section>
+      <section class="panel" style="grid-column: 1 / -1"><h2>Suggested roster</h2>
+        <div class="hint">The fewest Aniimo that cover all the work. Full-time jobs get their own Aniimo; part-time jobs are
+          grouped on Aniimo that can do several of them. <b>Ideal personality</b>: the letters that give +20% on its benches
+          (one letter per pair E/I, S/N, T/F, J/P; ? = does not matter). <b>Alternatives</b>: other Aniimo that can do all
+          the same jobs, best first, if you don't have the suggested one.</div>
+        <div class="tablewrap" id="roster"></div></section>
+      <section class="panel" style="grid-column: 1 / -1"><h2>Best case</h2>
+        <label class="check"><input type="checkbox" id="bestPrismana"> Include Prismana Aniimo</label>
+        <div id="best"></div></section>
+      <section class="panel"><h2>Food eaten per hour</h2><table><tbody id="eaten"></tbody></table></section>
+      <section class="panel"><h2>Seeds to buy per hour</h2><table><tbody id="bought"></tbody></table></section>
+    </div>
+  </div>
+</main>
+
+<script src="data.js"></script>
+<script src="icons/index.js" onerror="window.ANIIMO_ICONS = {}"></script>
+<script src="lp.js"></script>
+<script src="planner.js"></script>
+<!-- HiGHS solver (highs-js, MIT): the loader and the WebAssembly packed as base64 (a page opened from
+     disk cannot fetch a .wasm file). If either is missing, the built-in solver runs. -->
+<script src="vendor/highs.js" onerror="void 0"></script>
+<script src="vendor/highs-wasm.js" onerror="void 0"></script>
+<script>
+(function () {
+  const D = window.ANIIMO_DATA, P = window.Planner;
+  const $ = (id) => document.getElementById(id);
+  const fmt = (n, d = 0) => Number(n).toLocaleString("en-US", { maximumFractionDigits: d, minimumFractionDigits: d });
+  const STORE = "aniimo-planner-setup-v1";
+  const ICONS = window.ANIIMO_ICONS || {};
+  const ico = (key, big) => ICONS[key] ? `<img class="ico ${ICONS[key] === "g" ? "g" : ""} ${big ? "big" : ""}" src="icons/${key}.png" alt="" loading="lazy">` : "";
+  const itemIco = (id, big) => ico("item_" + id, big);
+  const facIco = (name, big) => (D.facilities[name] ? ico("facility_" + D.facilities[name].id, big) : "");
+  const recipeOf = (id) => D.recipes.find((r) => r.id === id);
+  // Aniimo head pictures (UI_PetHead_*). 12 forms have no picture of their own: use another form's.
+  const aniIco = (a, big) => {
+    let key = "aniimo_" + a.id;
+    if (!ICONS[key]) { const sib = (D.aniimo || []).find((x) => x.n === a.n && ICONS["aniimo_" + x.id]); if (sib) key = "aniimo_" + sib.id; }
+    return ico(key, big);
+  };
+  // Quick / Premium / High-Speed recipes are module unlocks; without the label a Quick Potato (x46 in
+  // 40 min) looks like the normal Potato (x2) row. Pill shows the variant and the module that unlocks it.
+  const variantHtml = (r) => r && r.v ? ` <span class="pill" title="${r.vn || ""}">${r.v}${r.mod ? " · " + r.mod.join(" ") : ""}</span>` : "";
+  const makesHtml = (id) => {
+    const r = recipeOf(id);
+    return r ? `<span class="makes">${r.out.map(([i, n]) => itemIco(i) + (D.items[i] ? D.items[i].n : i) + " x" + n).join(" + ")}${variantHtml(r)}</span>` : "";
+  };
+  const FAC_NAMES = Object.keys(D.facilities).filter((n) => D.recipes.some((r) => r.fac.some(([f]) => f === n))).sort();
+
+  // Default setup = the layout in the user's original optimizer link (RV 11).
+  const DEFAULT = {
+    rv: 11, cap: 32, reserved: 2, haulers: 2, homeAniimo: "", minFoodPerItem: 0, workerMaxLevel: 3, personality: false,
+    watered: true, feed: true, eventSeeds: true, oneRecipePerBench: true, unreleased: ["Jabster"], rvGoal: { level: "" }, cropOpOverhead: 0.5, notes: [], keep: {}, moonrayWheat: false,
+    modules: { "Ecological Module": 3, "Kitchen Module": 4, "Resource Detector": 2, "Crafting Module": 3 },
+    facilities: {
+      "Aniipod Maker": { count: 1, level: 3 }, "Dance Pad Polisher": { count: 1, level: 3 }, "Blazing Stove": { count: 1, level: 2 },
+      "Bouncy Brew Keg": { count: 1, level: 2 }, "Carousel Mill": { count: 2, level: 3 }, "Chimney Kiln": { count: 2, level: 2 },
+      "Claw Game Cooker": { count: 1, level: 4 }, "Crafting Table": { count: 2, level: 4 }, "Joy Wheel Loom": { count: 1, level: 2 },
+      "Jukebox Dryer": { count: 1, level: 4 }, "Phonolfactory Table": { count: 1, level: 3 }, "Pickling Jar": { count: 1, level: 2 },
+      "Simmering Pot": { count: 1, level: 3 }, "Woodworking Bench": { count: 2, level: 2 }, "Dewy House": { count: 1, level: 1 },
+      "Farmland": { count: 22, level: 5 }, "Mine": { count: 5, level: 3 }, "Nimbus Bed": { count: 1, level: 1 },
+      "Tidewhisper Sandcastle": { count: 1, level: 2 }, "Well": { count: 2, level: 2 }, "Woodland": { count: 11, level: 3 },
+    },
+    dedicated: ["Mine", "Well", "Tidewhisper Sandcastle", "Dewy House", "Nimbus Bed", "Starfall Hammock", "Floral Windmill"],
+    devices: true,
+    deviceCoverage: { Farmland: 16, Woodland: 4 },
+    values: {},
+    disabledRecipes: [],
+  };
+
+  let S = load();
+
+  function load() {
+    try { const s = JSON.parse(localStorage.getItem(STORE)); if (s && s.facilities) return Object.assign(clone(DEFAULT), s); } catch (e) { /* private window */ }
+    return clone(DEFAULT);
+  }
+  function save() { try { localStorage.setItem(STORE, JSON.stringify(S)); } catch (e) { /* ignore */ } }
+  function clone(o) { return JSON.parse(JSON.stringify(o)); }
+
+  // ---------- inputs ----------
+  function buildRv() {
+    const sel = $("rv");
+    sel.innerHTML = Object.keys(D.rvCaps).map((lv) => `<option value="${lv}">RV ${lv}</option>`).join("");
+    sel.value = S.rv;
+    sel.onchange = () => {
+      S.rv = Number(sel.value);
+      // user requests: a new RV puts every facility at the highest level AND the highest count it allows,
+      // and every module at its highest level (all still editable afterwards)
+      const L = P.rvLimits(D, S.rv);
+      for (const n of FAC_NAMES) {
+        const f = S.facilities[n] = S.facilities[n] || { count: 0, level: 1 };
+        if (L.facilities[n]) f.level = L.facilities[n];
+        if (L.counts[n] != null) f.count = L.counts[n];
+      }
+      Object.assign(S.modules, L.modules);
+      if (S.rvGoal && Number(S.rvGoal.level) <= S.rv) S.rvGoal.level = "";   // back to "the next one"
+      renderAll();
+    };
+    $("applyMax").onclick = () => {
+      const L = P.rvLimits(D, S.rv);
+      for (const n of FAC_NAMES) {
+        const f = S.facilities[n] = S.facilities[n] || { count: 0, level: 1 };
+        if (L.facilities[n]) f.level = L.facilities[n];
+        if (L.counts[n] != null) f.count = L.counts[n];
+      }
+      Object.assign(S.modules, L.modules);
+      renderAll();
+    };
+  }
+
+  function bindNumber(id, key) {
+    const el = $(id);
+    el.value = S[key] === null || S[key] === undefined ? "" : S[key];
+    el.oninput = () => { S[key] = el.value === "" ? "" : Number(el.value); recalc(); };
+  }
+  function bindCheck(id, key) { const el = $(id); el.checked = !!S[key]; el.onchange = () => { S[key] = el.checked; recalc(); }; }
+
+  function renderFacilities() {
+    const L = P.rvLimits(D, S.rv);
+    $("facilities").innerHTML = FAC_NAMES.map((n) => {
+      const f = S.facilities[n] || { count: 0, level: 1 };
+      const maxLv = L.facilities[n] || 0, maxCount = L.counts[n];
+      if (!maxLv || maxCount === 0) {
+        const need = D.facilities[n].levels[0].rv;
+        return `<tr class="muted"><td>${facIco(n)}${n}</td><td class="num" colspan="2">unlocks at RV ${need}</td></tr>`;
+      }
+      const opts = D.facilities[n].levels.filter((l) => l.lv <= maxLv)
+        .map((l) => `<option value="${l.lv}" ${l.lv === f.level ? "selected" : ""}>${l.lv}</option>`).join("");
+      const tooMany = maxCount != null && f.count > maxCount;
+      return `<tr><td>${facIco(n)}${n}</td>
+        <td class="num"><input type="number" min="0" ${maxCount != null ? `max="${maxCount}"` : ""} data-fac="${n}" data-k="count" value="${f.count || 0}"
+            ${tooMany ? 'style="border-color:var(--bad)"' : ""}> <span class="muted" style="font-size:11px">/${maxCount ?? "?"}</span></td>
+        <td class="num"><select data-fac="${n}" data-k="level">${opts}</select> <span class="muted" style="font-size:11px">/${maxLv}</span></td></tr>`;
+    }).join("");
+    $("facilities").querySelectorAll("[data-fac]").forEach((el) => {
+      el.oninput = el.onchange = () => {
+        const n = el.dataset.fac; S.facilities[n] = S.facilities[n] || { count: 0, level: 1 };
+        let v = Number(el.value);
+        const maxCount = P.rvLimits(D, S.rv).counts[n];
+        if (el.dataset.k === "count" && maxCount != null && v > maxCount) { v = maxCount; el.value = v; }
+        S.facilities[n][el.dataset.k] = v;
+        renderRecipes(); recalc();
+      };
+    });
+  }
+
+  function renderModules() {
+    const L = P.rvLimits(D, S.rv);
+    $("modules").innerHTML = Object.keys(D.modules).sort().map((n) => {
+      const max = D.modules[n].length;
+      const allowed = L.modules[n] || 0;
+      const opts = Array.from({ length: max + 1 }, (_, lv) => `<option value="${lv}" ${lv === (S.modules[n] || 0) ? "selected" : ""} ${lv > allowed ? "disabled" : ""}>${lv === 0 ? "none" : "Lv " + lv}${lv > allowed ? " (RV " + (D.modules[n][lv - 1] || {}).rv + ")" : ""}</option>`).join("");
+      return `<label class="row">${n} <select data-mod="${n}">${opts}</select></label>`;
+    }).join("");
+    $("modules").querySelectorAll("[data-mod]").forEach((el) => {
+      el.onchange = () => { S.modules[el.dataset.mod] = Number(el.value); renderRecipes(); recalc(); };
+    });
+  }
+
+  function renderDedicated() {
+    $("dedicated").innerHTML = FAC_NAMES.map((n) => `<label class="check"><input type="checkbox" data-ded="${n}" ${S.dedicated.includes(n) ? "checked" : ""}> ${n}</label>`).join("");
+    $("dedicated").querySelectorAll("[data-ded]").forEach((el) => {
+      el.onchange = () => { const n = el.dataset.ded; S.dedicated = S.dedicated.filter((x) => x !== n); if (el.checked) S.dedicated.push(n); recalc(); };
+    });
+  }
+
+  function renderDevices() {
+    const el = $("devices"); el.checked = S.devices !== false; el.onchange = () => { S.devices = el.checked; recalc(); };
+    S.deviceCoverage = S.deviceCoverage || { Farmland: 16, Woodland: 4 };
+    for (const f of ["Farmland", "Woodland"]) {
+      const inp = $("cover" + f); inp.value = S.deviceCoverage[f];
+      inp.oninput = () => { S.deviceCoverage[f] = Number(inp.value); recalc(); };
+    }
+  }
+
+  function renderUnreleased() {
+    const names = [...new Set((D.aniimo || []).map((a) => a.n))].sort();
+    const off = S.unreleased || [];
+    $("unreleasedSummary").textContent = off.length ? "Not out: " + off.join(", ") : "All Aniimo are in the game";
+    $("unreleased").innerHTML = names.map((n) => `<label class="check"><input type="checkbox" data-unreleased="${n}" ${off.includes(n) ? "checked" : ""}> ${n}</label>`).join("");
+    $("unreleased").querySelectorAll("[data-unreleased]").forEach((el) => {
+      el.onchange = () => {
+        const n = el.dataset.unreleased;
+        S.unreleased = (S.unreleased || []).filter((x) => x !== n);
+        if (el.checked) S.unreleased.push(n);
+        $("unreleasedSummary").textContent = S.unreleased.length ? "Not out: " + S.unreleased.join(", ") : "All Aniimo are in the game";
+        recalc();
+      };
+    });
+  }
+
+  // Aniimo you can actually get: the page's lists and the roster use this, never D.aniimo directly
+  const pool = () => P.released(D, S.unreleased);
+
+  function renderNotes() {
+    $("notes").innerHTML = D.notes.map((n) => `<label class="check"><input type="checkbox" data-note="${n}" ${S.notes.includes(n) ? "checked" : ""}> ${n}</label>`).join("");
+    $("notes").querySelectorAll("[data-note]").forEach((el) => {
+      el.onchange = () => { const n = el.dataset.note; S.notes = S.notes.filter((x) => x !== n); if (el.checked) S.notes.push(n); renderRecipes(); recalc(); };
+    });
+  }
+
+  // Next RV: what the upgrade asks, the recipe chain down to raw material, and (with days) the plan
+  // making it. Level "" = the one after your RV.
+  const goalLevel = () => Number(S.rvGoal && S.rvGoal.level) || Math.min(20, Number(S.rv) + 1);
+  function renderRvGoal() {
+    S.rvGoal = S.rvGoal || { level: "" };
+    const sel = $("rvGoalLevel");
+    const levels = Object.keys(D.rvLevels || {}).map(Number).filter((l) => l > Number(S.rv));
+    sel.innerHTML = levels.map((l) => `<option value="${l}" ${l === goalLevel() ? "selected" : ""}>${l}</option>`).join("") || "<option>-</option>";
+    sel.onchange = () => { S.rvGoal.level = Number(sel.value); if (S.fastRv) recalc(); else { save(); renderRvInfo(lastPlan); } };
+    const fast = $("fastRv"); fast.checked = !!S.fastRv;
+    fast.onchange = () => { S.fastRv = fast.checked; recalc(); };
+    renderRvInfo(lastPlan);
+  }
+  let lastPlan = null;
+  function renderRvInfo(res) {
+    const c = P.rvChain(D, goalLevel());
+    if (!c) { $("rvInfo").innerHTML = '<div class="muted">RV 20 is the last level.</div>'; return; }
+    const name = (i) => (D.items[i] ? D.items[i].n : i);
+    const cur = c.cur === 1010 ? "Home Coin" : name(c.cur);
+    const steps = c.steps.map((st) => `<div style="padding-left:${st.depth * 14}px">${itemIco(st.item)}<b>${fmt(st.qty)} ${name(st.item)}</b>
+      <span class="muted">= ${st.inputs.map(([i, q]) => fmt(q) + " " + name(i)).join(" + ")} on the ${st.fac[0]} (Lv ${st.fac[1]}+)</span></div>`).join("");
+    let out = `<div class="hint">RV ${c.level - 1} → ${c.level}: ${c.mats.map(([i, n]) => `${fmt(n)} ${name(i)}`).join(", ")},
+      ${fmt(c.coin)} ${cur}; the upgrade then takes ${fmt(c.secs / 3600, 1)} h.</div>${steps}
+      <div style="margin-top:4px">Raw material: ${c.raw.map(([i, q]) => `${itemIco(i)}<b>${fmt(q)}</b> ${name(i)}`).join(", ")}</div>`;
+    const dur = (h) => (!isFinite(h) ? "never" : h >= 48 ? fmt(h / 24, 1) + " days" : fmt(h, 1) + " h");
+    const f = res && res.fastRv;
+    // fastest-upgrade plan: the chain is part of the plan (benches and Aniimo counted), so the time comes
+    // straight from it
+    const t = f ? null : P.rvTime(D, res, goalLevel(), !!S.bestPrismana);
+    if (f && f.reachable) {
+      out += `<div style="margin-top:8px"><b>Fastest plan (the plan on this page):</b> ready to upgrade in <b>${dur(f.readyHours)}</b>,
+          then ${fmt(f.upgradeHours, 1)} h of upgrade: RV ${f.level} in <b>${dur(f.readyHours + f.upgradeHours)}</b>.</div>
+        <div class="muted">Makes per hour: ${f.perHour.map(([i, q]) => fmt(q, 1) + " " + name(i)).join(", ")}; sets aside
+          ${fmt(f.coinForUpgrade)} ${cur}/h of the ${fmt(res.coinPerHour)}/h it earns.</div>`;
+    } else if (f) {
+      out += `<div class="warn" style="margin-top:8px">This layout cannot make the RV ${f.level} materials.</div>`;
+    }
+    if (t) {
+      const lines = t.mats.map((m) => `<div>${itemIco(m.item)}<b>${name(m.item)}</b>: ${m.blocked.length ? '<span class="warn">' + m.blocked.join("; ") + "</span>"
+        : `<b>${dur(m.hours)}</b> <span class="muted">(${m.raw.map((x) => `${fmt(x.need)} ${name(x.item)} at ${fmt(x.perHour)}/h = ${dur(x.hours)}`).join(", ")};
+          benches ${dur(m.benchHours)} with ${[...new Set(m.stages.map((st) => st.worker))].join(", ")})</span>`}</div>`).join("");
+      out += `<div style="margin-top:8px"><b>With this plan and the best Aniimo on the benches${S.personality ? " (personality matched, +20%)" : ""}:</b></div>${lines}
+        ${t.coinHours != null ? `<div>${fmt(t.coin)} ${cur}: <b>${dur(t.coinHours)}</b> <span class="muted">at ${fmt(res.coinPerHour)}/h</span></div>` : ""}
+        <div style="margin-top:4px">${isFinite(t.readyHours) ? `Ready to upgrade in <b>${dur(t.readyHours)}</b>, then ${fmt(t.upgradeHours, 1)} h of upgrade: RV ${t.level} in <b>${dur(t.totalHours)}</b>.`
+          : '<span class="warn">Not reachable with this plan: see above.</span>'}</div>
+        <div class="hint">Needs a free Aniimo for those benches; the plan's Aniimo count does not include them.</div>`;
+    }
+    $("rvInfo").innerHTML = out;
+  }
+
+  function renderKeep() {
+    S.keep = S.keep || {};
+    const pods = Object.entries(D.items).filter(([, it]) => /^Aniipod/.test(it.n)).sort((a, b) => a[0] - b[0]);
+    $("keep").innerHTML = pods.map(([i, it]) => `<label class="row"><span>${itemIco(i)}${it.n} per day</span>
+      <input type="number" min="0" data-keep="${i}" value="${S.keep[i] ?? ""}" placeholder="0"></label>`).join("");
+    $("keep").querySelectorAll("[data-keep]").forEach((el) => {
+      el.oninput = () => { if (el.value === "" || Number(el.value) === 0) delete S.keep[el.dataset.keep]; else S.keep[el.dataset.keep] = Number(el.value); recalc(); };
+    });
+    const mw = $("moonrayWheat"); mw.checked = !!S.moonrayWheat; mw.onchange = () => { S.moonrayWheat = mw.checked; recalc(); };
+  }
+
+  function renderRecipes() {
+    const choices = P.recipeChoices(D, S);
+    const off = new Set(S.disabledRecipes.map(Number));
+    const byFac = {};
+    for (const c of choices) for (const f of c.facilities) (byFac[f] = byFac[f] || []).push(c);
+    $("recipes").innerHTML = Object.keys(byFac).sort().map((f) => `<h3>${facIco(f)}${f}</h3>` + byFac[f].map((c) =>
+      `<label class="check"><input type="checkbox" data-rec="${c.id}" ${off.has(c.id) ? "" : "checked"}> ${makesHtml(c.id)}${c.note ? ' <span class="pill">note</span>' : ""}${!c.variant && c.mod ? ' <span class="pill">' + c.mod.join(" ") + "</span>" : ""}</label>`).join("")).join("");
+    $("recipes").querySelectorAll("[data-rec]").forEach((el) => {
+      el.onchange = () => { const id = Number(el.dataset.rec); S.disabledRecipes = S.disabledRecipes.filter((x) => Number(x) !== id); if (!el.checked) S.disabledRecipes.push(id); recalc(); };
+    });
+  }
+  $("allOn").onclick = () => { S.disabledRecipes = []; renderRecipes(); recalc(); };
+  $("allOff").onclick = () => { S.disabledRecipes = P.recipeChoices(D, S).map((c) => c.id); renderRecipes(); recalc(); };
+
+  $("export").onclick = () => {
+    const blob = new Blob([JSON.stringify(S, null, 2)], { type: "application/json" });
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "aniimo-setup-rv" + S.rv + ".json"; a.click();
+  };
+  $("importBtn").onclick = () => $("import").click();
+  $("import").onchange = (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    f.text().then((t) => { S = Object.assign(clone(DEFAULT), JSON.parse(t)); renderAll(); });
+  };
+  $("reset").onclick = () => { S = clone(DEFAULT); renderAll(); };
+
+  // ---------- results ----------
+  let timer = null;
+  // HiGHS loads once (~3.5 MB of WebAssembly); plans wait for it, and fall back to the built-in
+  // solver if it cannot load
+  const solverReady = (window.Module && window.HIGHS_WASM_B64
+    ? Promise.resolve().then(() => {
+        const bin = Uint8Array.from(atob(window.HIGHS_WASM_B64), (c) => c.charCodeAt(0));
+        return window.Module({ instantiateWasm: (imports, done) => { WebAssembly.instantiate(bin, imports).then((r) => done(r.instance)); return {}; } });
+      }).then((h) => P.useSolver(h))
+    : Promise.resolve()).catch(() => P.useSolver(null));
+  function recalc() { save(); clearTimeout(timer); timer = setTimeout(() => solverReady.then(run), 80); }
+
+  function run() {
+    const inp = Object.assign({}, S, { homeAniimo: S.homeAniimo === "" ? null : S.homeAniimo,
+      workerMaxLevel: Number(S.workerMaxLevel) || 3, fastRv: S.fastRv ? goalLevel() : null });
+    const facs = {};
+    for (const [n, f] of Object.entries(S.facilities)) if (f.count > 0) facs[n] = f;
+    inp.facilities = facs;
+    const t0 = performance.now();
+    const p = P.plan(D, inp);
+    lastInputs = inp;
+    const ms = performance.now() - t0;
+
+    $("warnings").innerHTML = (p.warnings || []).map((w) => `<div class="warn">${w}</div>`).join("");
+    if (p.status !== "optimal") {
+      $("headline").textContent = "No plan";
+      $("subline").textContent = p.status;
+      for (const id of ["lines", "sold", "eaten", "bought", "abilities", "devicesOut"]) $(id).innerHTML = "";
+      $("budget").innerHTML = "";
+      renderRvInfo(p);
+      return;
+    }
+    $("headline").textContent = fmt(p.coinPerHour) + " Home Coin / hour";
+    $("subline").textContent = fmt(p.coinPerDay) + " per day · solved in " + fmt(ms) + " ms (" + P.solverName() + ")";
+
+    const u = p.aniimo.used, pool = Math.max(p.aniimo.pool, 0.0001);
+    const seg = (v, c) => `<span style="width:${Math.min(100, v / pool * 100)}%;background:${c}"></span>`;
+    $("budget").innerHTML = `<div class="row"><span>${fmt(p.aniimo.total, 1)} of ${fmt(p.aniimo.pool)} production Aniimo busy</span>
+      <span class="muted">cap ${p.aniimo.cap} − kept out ${p.aniimo.reserved} − haulers ${p.aniimo.haulers}</span></div>
+      <div class="bar">${seg(u.dedicated, "var(--bar1)")}${seg(u.devices, "var(--bar4)")}${seg(u.bench, "var(--bar2)")}${seg(u.crop, "var(--bar3)")}</div>
+      <div class="legend"><span><i style="background:var(--bar1)"></i>locked facilities ${fmt(u.dedicated, 1)}</span>
+        <span><i style="background:var(--bar4)"></i>environment devices ${fmt(u.devices, 1)}</span>
+        <span><i style="background:var(--bar2)"></i>benches ${fmt(u.bench, 1)}</span>
+        <span><i style="background:var(--bar3)"></i>crop tasks ${fmt(u.crop, 1)}</span></div>`;
+
+    lastLines = p.lines;
+    renderLines();
+    // plots under each device: the same whole plots the plan table shows
+    const wholePlots = P.wholeCounts(p.lines);
+    const zoneName = (d) => d.facility + " (" + d.setting + ")";
+    const under = (d) => {
+      const by = {};
+      for (const l of p.lines) if (l.zone === zoneName(d)) by[l.facility] = (by[l.facility] || 0) + wholePlots.get(l);
+      return Object.entries(by).map(([f, n]) => n + " " + f).join(", ");
+    };
+    $("devicesOut").innerHTML = p.devices.map((d) => `<tr><td>${facIco(d.facility, true)}<b>${d.place}x ${d.facility}</b> on <b>${d.setting}</b>
+        <div class="muted" style="font-size:12px">${under(d)}: ${d.crops.join(", ")}</div></td>
+        <td class="num">${fmt(d.count, 2)} / ${d.max}</td><td class="muted">${d.worker}</td></tr>`).join("")
+      || `<tr><td class="muted">${S.devices === false ? "turned off" : "none worth placing"}</td></tr>`;
+    lastPlan = p;
+    renderRvInfo(p);
+    renderRest(p);
+  }
+
+  // Plan table sorting (user request): click a header to sort, click again to reverse. The choice is
+  // kept in this browser; default is Coin/h, highest first.
+  let lastLines = [];
+  const SORT_KEYS = {
+    facility: (l) => l.facility + " " + (l.zone || ""), count: (l) => l.count, makes: (l) => l.makes,
+    cycle: (l) => l.minutesPerCycle, coin: (l) => l.lineValue, worker: (l) => l.worker,
+    perhour: (l) => l.cyclesPerHour,
+  };
+  S.sort = S.sort || { key: "coin", dir: -1 };
+  function renderLines() {
+    const get = SORT_KEYS[S.sort.key] || SORT_KEYS.coin;
+    const rows = lastLines.slice().sort((a, b) => {
+      const x = get(a), y = get(b);
+      return (typeof x === "string" ? x.localeCompare(y) : x - y) * S.sort.dir;
+    });
+    document.querySelectorAll("th[data-sort]").forEach((th) => {
+      th.dataset.arrow = th.dataset.sort === S.sort.key ? (S.sort.dir > 0 ? "▲" : "▼") : "";
+    });
+    const whole = P.wholeCounts(lastLines);
+    $("lines").innerHTML = rows.map((l) => {
+      const r = recipeOf(l.recipeId);
+      let many, cycles = l.cyclesPerHour;
+      if (whole.has(l)) {
+        const w = whole.get(l);
+        cycles = l.count > 0 ? l.cyclesPerHour / l.count * w : 0;   // output of the whole plots shown
+        many = `<b>${w}</b> <span class="muted" title="exact: ${fmt(l.count, 2)}">${w === 1 ? "plot" : "plots"}</span>`;
+        if (l.kind === "dedicated") many = `<b>${w}</b>`;
+      } else {
+        many = l.count >= 0.995 ? `<b>${fmt(l.count, 1)}</b>` : `<span title="exact: ${fmt(l.count, 2)}">busy <b>${fmt(l.count * 100)}%</b></span>`;
+        // one recipe per bench: say how many benches are set to this recipe, then how busy they are
+        if (l.benches != null && l.count < l.benches - 0.005) many = `<b>${l.benches}</b> <span class="muted">${l.benches === 1 ? "bench" : "benches"}</span> · <span title="exact: ${fmt(l.count, 2)}">busy <b>${fmt(l.count / l.benches * 100)}%</b></span>`;
+      }
+      const perHour = r ? r.out.map(([i, n]) => `${itemIco(i)}${fmt(n * cycles, n * cycles < 10 ? 1 : 0)}`).join(" ") : "";
+      return `<tr><td>${facIco(l.facility, true)}${l.facility}${l.zone ? ' <span class="pill">' + l.zone + "</span>" : ""}</td>
+      <td class="num" style="white-space:nowrap">${many}</td><td>${makesHtml(l.recipeId)}${l.note ? ' <span class="pill">note</span>' : ""}</td>
+      <td class="num" style="white-space:nowrap">${perHour}</td>
+      <td class="num">${fmt(l.minutesPerCycle, 1)} min</td><td class="num">${fmt(l.lineValue)}</td><td class="muted">${l.worker}</td></tr>`;
+    }).join("");
+  }
+  document.addEventListener("click", (e) => {
+    const th = e.target.closest("table.sortable th");
+    if (!th) return;
+    const table = th.closest("table"), col = [...th.parentNode.children].indexOf(th);
+    const dir = th.dataset.arrow === "▲" ? -1 : 1;
+    table.querySelectorAll("th").forEach((x) => { x.dataset.arrow = ""; });
+    th.dataset.arrow = dir > 0 ? "▲" : "▼";
+    const num = th.dataset.type === "num";
+    const tbody = table.tBodies[0];
+    const rows = [...tbody.rows].sort((r1, r2) => {
+      const a1 = r1.cells[col] ? r1.cells[col].dataset.v ?? r1.cells[col].textContent : "";
+      const a2 = r2.cells[col] ? r2.cells[col].dataset.v ?? r2.cells[col].textContent : "";
+      return (num ? Number(a1) - Number(a2) : String(a1).localeCompare(String(a2))) * dir;
+    });
+    rows.forEach((r) => tbody.appendChild(r));
+  });
+  document.querySelectorAll("th[data-sort]").forEach((th) => {
+    th.onclick = () => {
+      const k = th.dataset.sort;
+      // text columns start A to Z, number columns start highest first
+      S.sort = S.sort.key === k ? { key: k, dir: -S.sort.dir } : { key: k, dir: ["facility", "makes", "worker"].includes(k) ? 1 : -1 };
+      save(); renderLines();
+    };
+  });
+
+  function renderRest(p) {
+    const keptHtml = (p.kept || []).map((k) => `<tr><td>${itemIco(k.id)}${k.item} <span class="pill">keep</span></td><td class="num">${fmt(k.perDay, 1)}/day</td><td></td></tr>`).join("");
+    $("sold").innerHTML = keptHtml + p.sold.map((s) => `<tr><td>${itemIco(s.id)}${s.item}</td><td class="num">${fmt(s.perHour, 1)}</td><td class="num">${fmt(s.coin)}</td></tr>`).join("") || `<tr><td class="muted">nothing</td></tr>`;
+    $("eaten").innerHTML = (p.eaten.length ? `<tr><td colspan="3" class="muted">Each item fed lasts about ${fmt(p.food.hoursPerItem * 60)} min for ${fmt(p.food.eaters)} Aniimo · a stack of 99 about ${fmt(p.food.hoursPerItem * 99, 1)} h</td></tr>` : "") + p.eaten.map((e) => `<tr><td>${itemIco(e.id)}${e.item}</td><td class="num">${fmt(e.perHour, 1)}</td><td class="num muted">${fmt(e.food)} food</td></tr>`).join("")
+      || `<tr><td class="muted">${S.feed ? "nothing" : "food planning is off"}</td></tr>`;
+    $("bought").innerHTML = p.bought.map((b) => `<tr><td>${itemIco(b.id)}${b.item}</td><td class="num">${fmt(b.perHour, 1)}</td><td class="num">${fmt(b.coin)} coin</td></tr>`).join("") || `<tr><td class="muted">nothing</td></tr>`;
+    const lettersFor = (worker) => {
+      const m = {};
+      for (const l of p.lines) if (l.worker === worker && l.mbti) (m[l.mbti] = m[l.mbti] || new Set()).add(l.facility);
+      return Object.entries(m).map(([k, f]) => `<span class="pill">${k}</span> ${[...f].join(", ")}`).join(" · ");
+    };
+    const abTitle = (a) => Object.entries(a.ab).map(([k, v]) => k + " " + v).join(", ");
+    const aniName = (a) => `<span title="${abTitle(a)}">${aniIco(a)}${a.n}${a.prismana ? ' <span class="pill">Prismana</span>'
+      : ' <span class="muted">(' + P.formLabel(a) + ")</span>"}</span>`;
+    // "+N more" opens in place (user: it did nothing before)
+    const moreList = (parts, n, sep) => parts.length <= n ? parts.join(sep)
+      : parts.slice(0, n).join(sep) + `<details class="more"><summary>+${parts.length - n} more</summary>${parts.slice(n).join(sep)}</details>`;
+    const who = (worker) => {
+      const j = P.parseJob(D, worker);
+      if (!j) return "";
+      const list = P.candidates(pool(), j.ab, j.lv, S.bestPrismana, j.fam);
+      return moreList(list.map((a) => aniName(a).replace("</span>", ` <b>${a.ab[j.ab]}</b></span>`)), 10, ", ");
+    };
+    const altHtml = (m, res) => {
+      const alts = P.alternatives(pool(), m, !!S.bestPrismana, res && res.abilityLevels, res && res.familyLevels);
+      if (!alts.length) return '<span class="muted">none: only this Aniimo does all these jobs</span>';
+      const jobsAb = [...new Set(m.jobs.map((j) => j.job.split(" ")[0]))];
+      return moreList(alts.map((a) => `${aniName(a)} <span class="muted">${jobsAb.map((ab) => ab + " " + (a.ab[ab] || 0)).join(", ")}
+        · ${Object.keys(a.ab).length} abilities</span>`), 6, "<br>");
+    };
+    const rosterHtml = (res, title) => {
+      const R = P.roster(pool(), res, !!S.bestPrismana);
+      const rows = R.members.map((m) => {
+        const ip = P.idealPersonality(res, m);
+        const alts = P.alternatives(pool(), m, !!S.bestPrismana, res && res.abilityLevels, res && res.familyLevels);
+        const work = m.jobs.reduce((acc, j) => acc + j.load, 0);
+        return `<tr><td style="white-space:nowrap" data-v="${m.aniimo.n}">${m.count}x <b>${aniIco(m.aniimo, true)}${m.aniimo.n}</b>${m.aniimo.prismana ? ' <span class="pill">Prismana</span>' : ""}
+          <div class="muted" style="font-size:12px">${m.aniimo.fn || "Basic Form"}</div></td>
+          <td class="muted" data-v="${Object.keys(m.aniimo.ab).length * 100 + Object.values(m.aniimo.ab).reduce((a, b) => a + b, 0)}">${abTitle(m.aniimo)}</td>
+          <td data-v="${work * m.count}">${m.jobs.map((j) => j.job + (m.count === 1 && j.load < 0.995 ? " (" + fmt(j.load * 100) + "%)" : "")).join(" · ")}</td>
+          <td data-v="${ip.share}">${!Object.keys(ip.help).length ? '<span class="muted">any (no bench bonus for these jobs)</span>'
+            : `<b style="letter-spacing:.08em">${ip.code}</b><div class="muted" style="font-size:12px">${Object.entries(ip.help).map(([k, f]) => k + ": " + f.join(", ")).join(" · ")}
+              · +20% on ${fmt(ip.share * 100)}% of its work</div>`}</td>
+          <td style="font-size:12px" data-v="${alts.length}">${altHtml(m, res)}</td></tr>`;
+      }).join("");
+      return `<div class="hint" style="margin-top:6px"><b>${title || "Suggested roster"}: ${R.total} Aniimo.</b> Click a column to sort.</div>
+        <table class="sortable"><thead><tr><th data-type="text">Aniimo</th><th data-type="num">Jobs it can do</th><th data-type="num">Works on</th>
+        <th data-type="num">Ideal personality</th><th data-type="num">Alternatives</th></tr></thead><tbody>${rows}</tbody></table>`
+        + (R.uncovered.length ? `<div class="warn">No Aniimo can do: ${R.uncovered.join(", ")}</div>` : "");
+    };
+    window.__rosterHtml = rosterHtml;
+    $("abilities").innerHTML = Object.entries(p.abilityNeeds).sort((a, b) => b[1] - a[1])
+      .map(([k, v]) => `<tr><td style="white-space:nowrap" data-v="${k}"><b>${k}</b></td><td class="num" data-v="${v}">${Math.ceil(v - 1e-6)}</td>
+        <td data-v="${((j) => j ? P.candidates(pool(), j.ab, j.lv, S.bestPrismana, j.fam).length : 0)(P.parseJob(D, k))}">${who(k)}<div class="muted" style="font-size:12px">${lettersFor(k)}</div></td></tr>`).join("");
+    $("roster").innerHTML = rosterHtml(p);
+    renderBest(p);
+  }
+
+  // Best case (user request): the same layout if every job had the best Aniimo in the game for it.
+  let lastInputs = null;
+  function renderBest(current) {
+    if (!lastInputs) return;
+    const b = P.bestCase(D, lastInputs, !!S.bestPrismana);
+    if (b.status !== "optimal") { $("best").innerHTML = `<div class="muted">No best-case plan: ${b.status}</div>`; return; }
+    const gain = b.coinPerHour - current.coinPerHour;
+    const rows = Object.entries(b.abilityNeeds).sort((x, y) => y[1] - x[1]).map(([k, v]) => {
+      const m = P.parseJob(D, k);
+      const ab = m ? m.ab : k, lv = m ? (m.fam ? b.familyLevels[m.fam] : b.abilityLevels[ab]) : null;
+      const top = m ? P.candidates(pool(), ab, lv, !!S.bestPrismana, m.fam).slice(0, 6)
+        .map((a) => a.n + (a.prismana ? ' <span class="pill">Prismana</span>' : ' <span class="muted">(' + P.formLabel(a) + ")</span>")).join(", ") : "";
+      return `<tr><td style="white-space:nowrap"><b>${k}</b></td><td class="num">${Math.ceil(v - 1e-6)}</td>
+        <td>level <b>${lv ?? "-"}</b>: ${top}</td></tr>`;
+    }).join("");
+    $("best").innerHTML = `<div class="row"><span><b>${fmt(b.coinPerHour)}</b> Home Coin / hour with the best Aniimo
+        (${fmt(b.coinPerDay)} / day)</span><span class="${gain > 0 ? "" : "muted"}">${gain >= 0 ? "+" : ""}${fmt(gain)} / hour vs your current plan</span></div>
+      <div class="hint">Same facilities, RV and options; every job gets the highest ability level that exists
+        ${S.bestPrismana ? "(Prismana forms included)" : "(without Prismana forms)"}, with a matching personality.</div>
+      <table><tbody>${rows}</tbody></table>` + window.__rosterHtml(b, "Best-case roster");
+  }
+
+  function renderAll() {
+    save();
+    $("rv").value = S.rv;
+    for (const [id, key] of [["cap", "cap"], ["reserved", "reserved"], ["haulers", "haulers"], ["homeAniimo", "homeAniimo"], ["minFoodPerItem", "minFoodPerItem"], ["cropOpOverhead", "cropOpOverhead"]]) bindNumber(id, key);
+    const wl = $("workerMaxLevel"); wl.value = String(S.workerMaxLevel || 3); wl.onchange = () => { S.workerMaxLevel = Number(wl.value); recalc(); };
+    for (const [id, key] of [["personality", "personality"], ["watered", "watered"], ["oneRecipePerBench", "oneRecipePerBench"], ["feed", "feed"], ["eventSeeds", "eventSeeds"], ["bestPrismana", "bestPrismana"]]) bindCheck(id, key);
+    renderFacilities(); renderModules(); renderDedicated(); renderDevices(); renderNotes(); renderUnreleased(); renderKeep(); renderRvGoal(); renderRecipes();
+    recalc();
+  }
+
+  $("buildInfo").textContent = "Game data build " + D.build + " · runs entirely on this PC";
+  buildRv();
+  renderAll();
+})();
+</script>
+</body>
+</html>

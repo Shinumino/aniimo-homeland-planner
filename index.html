@@ -166,7 +166,7 @@
 
     <section class="panel">
       <h2>Make for yourself</h2>
-      <div class="hint">Tick the Aniipods you make. The Aniipod Maker is set to them and makes them whenever the ingredients are in storage; the plan uses everything else for coin.</div>
+      <div class="hint">Tick what you make for yourself. That facility is set to it and makes it whenever the ingredients are in storage; the plan uses everything else for coin.</div>
       <div id="aniipods"></div>
       <label class="check"><input type="checkbox" id="moonrayWheat"> I have Moonray Wheat to buy event seeds
         (Moondew Radish, Waxing Moon Pepper)</label>
@@ -377,7 +377,7 @@
         const maxCount = P.rvLimits(D, S.rv).counts[n];
         if (el.dataset.k === "count" && maxCount != null && v > maxCount) { v = maxCount; el.value = v; }
         S.facilities[n][el.dataset.k] = v;
-        if (n === "Aniipod Maker") renderAniipods();
+        if (BY_HAND_FACILITIES.includes(n)) renderAniipods();
         renderRecipes(); recalc();
       };
     });
@@ -494,32 +494,45 @@
     $("rvInfo").innerHTML = out;
   }
 
-  // Aniipods (user, 2026-09-28): a tick box per Aniipod, not an amount per day. A ticked Aniipod gets an
-  // Aniipod Maker set to it, making Aniipods whenever its ingredients are in storage; that Maker is left
-  // out of the coin plan. One Maker per ticked Aniipod (one recipe per bench).
-  const aniipodRecipes = () => {
-    const m = S.facilities["Aniipod Maker"] || { count: 0, level: 0 };
-    return D.recipes.filter((r) => r.fac.some(([f, lv]) => f === "Aniipod Maker" && lv <= (m.level || 0)) && m.count > 0);
-  };
-  const aniipodsOn = () => {
-    const ok = new Set(aniipodRecipes().map((r) => r.id));
-    const makers = (S.facilities["Aniipod Maker"] || {}).count || 0;
-    return (S.aniipods || []).filter((id) => ok.has(id)).slice(0, makers);
+  // Made by hand (user, 2026-09-28): a tick box per Aniipod, and the same for the Dance Pad Polisher's
+  // Growth Bud / Flower / Fruit, not an amount per day. A ticked item gets one of those facilities set to
+  // it, making it whenever its ingredients are in storage; that facility is left out of the coin plan and
+  // its ingredients are reserved (grown or mined, never sold). One facility per ticked item.
+  // (S.aniipods keeps its name so saved setups still load.)
+  const BY_HAND_FACILITIES = ["Aniipod Maker", "Dance Pad Polisher"];
+  const byHandFac = (r) => BY_HAND_FACILITIES.find((f) => r.fac.some(([g]) => g === f));
+  const byHandRecipes = () => D.recipes.filter((r) => {
+    const f = byHandFac(r), have = f && S.facilities[f];
+    return have && have.count > 0 && r.fac.some(([g, lv]) => g === f && lv <= (have.level || 0));
+  });
+  const byHandOn = () => {
+    const ok = new Map(byHandRecipes().map((r) => [r.id, byHandFac(r)]));
+    const used = {};
+    return (S.aniipods || []).filter((id) => {
+      const f = ok.get(id);
+      if (!f) return false;
+      used[f] = (used[f] || 0) + 1;
+      return used[f] <= S.facilities[f].count;
+    });
   };
   function renderAniipods() {
     S.aniipods = S.aniipods || [];
-    const makers = (S.facilities["Aniipod Maker"] || {}).count || 0;
-    const on = aniipodsOn();
-    const list = aniipodRecipes();
-    $("aniipods").innerHTML = list.length ? list.map((r) => `<label class="check"><input type="checkbox" data-pod="${r.id}" ${on.includes(r.id) ? "checked" : ""}
-        ${!on.includes(r.id) && on.length >= makers ? "disabled" : ""}> ${makesHtml(r.id)}
-        <span class="muted">${T("from {0}", r.in.map(([i, q]) => q + " " + N.item(i)).join(" + "))}</span></label>`).join("")
-      + `<div class="hint">${T("{0} Aniipod Maker(s): tick up to {0}.", makers)}</div>`
-      : `<div class="muted">${T("No Aniipod Maker in your layout.")}</div>`;
+    const on = byHandOn();
+    const list = byHandRecipes();
+    const groups = BY_HAND_FACILITIES.filter((f) => list.some((r) => byHandFac(r) === f));
+    $("aniipods").innerHTML = groups.length ? groups.map((f) => {
+      const count = S.facilities[f].count;
+      const taken = on.filter((id) => byHandFac(recipeOf(id)) === f).length;
+      return `<h3 style="font-size:12px;margin:8px 0 2px" class="muted">${facIco(f)}${N.fac(f)}</h3>` + list.filter((r) => byHandFac(r) === f).map((r) =>
+        `<label class="check"><input type="checkbox" data-pod="${r.id}" ${on.includes(r.id) ? "checked" : ""}
+          ${!on.includes(r.id) && taken >= count ? "disabled" : ""}> ${makesHtml(r.id)}
+          <span class="muted">${T("from {0}", r.in.map(([i, q]) => q + " " + N.item(i)).join(" + "))}</span></label>`).join("")
+        + `<div class="hint">${T("{0} {1}: tick up to {0}.", count, N.fac(f))}</div>`;
+    }).join("") : `<div class="muted">${T("No Aniipod Maker or Dance Pad Polisher in your layout.")}</div>`;
     $("aniipods").querySelectorAll("[data-pod]").forEach((el) => {
       el.onchange = () => {
         const id = Number(el.dataset.pod);
-        S.aniipods = aniipodsOn().filter((x) => x !== id);
+        S.aniipods = byHandOn().filter((x) => x !== id);
         if (el.checked) S.aniipods.push(id);
         renderAniipods(); recalc();
       };
@@ -569,11 +582,12 @@
       workerMaxLevel: Number(S.workerMaxLevel) || 3, fastRv: S.fastRv ? goalLevel() : null });
     const facs = {};
     for (const [n, f] of Object.entries(S.facilities)) if (f.count > 0) facs[n] = f;
-    const pods = aniipodsOn();
-    if (pods.length && facs["Aniipod Maker"]) {
-      const left = facs["Aniipod Maker"].count - pods.length;
-      if (left > 0) facs["Aniipod Maker"] = Object.assign({}, facs["Aniipod Maker"], { count: left });
-      else delete facs["Aniipod Maker"];
+    const pods = byHandOn();
+    for (const f of BY_HAND_FACILITIES) {          // the facilities set by hand leave the coin plan
+      const n = pods.filter((id) => byHandFac(recipeOf(id)) === f).length;
+      if (!n || !facs[f]) continue;
+      if (facs[f].count - n > 0) facs[f] = Object.assign({}, facs[f], { count: facs[f].count - n });
+      else delete facs[f];
     }
     inp.facilities = facs;
     inp.keep = {};
@@ -613,8 +627,8 @@
     $("byHand").innerHTML = pods.map((id) => {
       const r = recipeOf(id);
       const perHour = Math.min(...r.in.map(([i, q]) => madePerHour(i) / q));
-      return `<div class="hint">${facIco("Aniipod Maker")}${T("{0}: {1}, whenever its ingredients are in storage (not in the coin plan).",
-        "<b>" + N.fac("Aniipod Maker") + "</b>", makesHtml(id))} ${T("About {0} an hour from {1}.", fmt(perHour, 1), r.in.map(([i]) => T("{0}/h of {1}", fmt(madePerHour(i), 0), N.item(i))).join(", "))}</div>`;
+      return `<div class="hint">${facIco(byHandFac(r))}${T("{0}: {1}, whenever its ingredients are in storage (not in the coin plan).",
+        "<b>" + N.fac(byHandFac(r)) + "</b>", makesHtml(id))} ${T("About {0} an hour from {1}.", fmt(perHour, 1), r.in.map(([i]) => T("{0}/h of {1}", fmt(madePerHour(i), 0), N.item(i))).join(", "))}</div>`;
     }).join("");
     // plots under each device: the same whole plots the plan table shows
     const wholePlots = P.wholeCounts(p.lines);

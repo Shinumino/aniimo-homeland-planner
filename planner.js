@@ -418,7 +418,6 @@
     return { status: "optimal", x, value, capped: r.Status !== "Optimal" };
   }
 
-  const RESERVE_MIN = 1;                         // reserved ingredient made per hour, at least
   const BB_NODE_LIMIT = (typeof globalThis !== "undefined" && globalThis.__bbLimit) || 80, BB_GAP = 0.001;
   function solveWhole(obj, rows, b, groups, xOfY, route) {
     const n = obj.length;
@@ -668,11 +667,16 @@
     const keepOf = new Map(keep);
     // Reserved ingredients (user, 2026-09-28: "if I tick Aniipod Pro I still have only Shell Mines, but Pro
     // needs Clay"): a ticked Aniipod's Maker takes its ingredient whenever there is some, so the plan must
-    // make some (>= RESERVE_MIN an hour, which sets a whole Mine to Clay), and none of it is sold, eaten
-    // or fed to a bench.
+    // make it on at least one whole facility (a Mine on Clay, a plot of Potato for Growth Bud; "at least 1
+    // an hour" was 4% of a Potato plot, shown as 0 plots), and none of it is sold, eaten or fed to a bench.
     const reserve = new Set((inp.reserve || []).map(Number));
     for (const i of reserve) if (!items.has(i)) warnings.push("Nothing in your layout can make " + (D.items[i] ? D.items[i].n : i) + ".");
-    for (const [i, k] of items) { rows.push(new Array(n).fill(0)); b.push(-(keepOf.get(i) || 0) - (reserve.has(i) ? RESERVE_MIN : 0)); }  // made >= used + sold + kept
+    for (const [i, k] of items) { rows.push(new Array(n).fill(0)); b.push(-(keepOf.get(i) || 0)); }  // made >= used + sold + kept
+    for (const i of reserve) {                     // facilities (plots, Mines) making it >= 1
+      const row = new Array(n).fill(0);
+      cols.forEach((c, j) => { if (c.r.out.some(([o]) => o === i)) row[j] = -1; });
+      if (row.some((v) => v)) { rows.push(row); b.push(-1); }
+    }
     cols.forEach((c, j) => {
       for (const [i, q] of c.r.in) rows[itemBase + items.get(i)][j] += q * c.perHour;
       for (const [i, q] of c.r.out) rows[itemBase + items.get(i)][j] -= q * c.perHour;

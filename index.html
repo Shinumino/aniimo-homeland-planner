@@ -214,8 +214,7 @@
       <div id="byHand"></div>
     </section>
     <div class="grid2">
-      <section class="panel"><h2>Environment devices to place</h2><table><tbody id="devicesOut"></tbody></table>
-        <div class="hint">A fraction means the devices are not fully used.</div></section>
+      <section class="panel"><h2>Environment devices to place</h2><table><tbody id="devicesOut"></tbody></table></section>
       <section class="panel"><h2>Sell per hour</h2><table><tbody id="sold"></tbody></table></section>
       <section class="panel" style="grid-column: 1 / -1"><h2>Aniimo you need</h2><table class="sortable"><thead><tr><th data-type="text">Job</th><th class="num" data-type="num">Full time</th>
         <th data-type="num">Aniimo that can do it</th></tr></thead><tbody id="abilities"></tbody></table>
@@ -630,20 +629,20 @@
       return `<div class="hint">${facIco(byHandFac(r))}${T("{0}: {1}, whenever its ingredients are in storage (not in the coin plan).",
         "<b>" + N.fac(byHandFac(r)) + "</b>", makesHtml(id))} ${T("About {0} an hour from {1}.", fmt(perHour, 1), r.in.map(([i]) => T("{0}/h of {1}", fmt(madePerHour(i), 0), N.item(i))).join(", "))}</div>`;
     }).join("");
-    // plots under each device: the same whole plots the plan table shows
+    // Where each device goes, said plainly (user, 2026-09-28: "hot furnace on cherry blossom, no need to
+    // justify"): how many, the setting, and the whole plots of each crop under it (the plan table's counts)
     const wholePlots = P.wholeCounts(p.lines);
     const zoneName = (d) => d.facility + " (" + d.setting + ")";
-    const under = (d) => {
-      const by = {};
-      for (const l of p.lines) if (l.zone === zoneName(d)) by[l.facility] = (by[l.facility] || 0) + wholePlots.get(l);
-      return Object.entries(by).map(([f, n]) => n + " " + N.fac(f)).join(", ");
+    const over = (d) => {
+      const by = new Map();                        // "Farmland|item" -> plots
+      for (const l of p.lines) if (l.zone === zoneName(d)) {
+        const k = l.facility + "|" + recipeOf(l.recipeId).out[0][0];
+        by.set(k, (by.get(k) || 0) + wholePlots.get(l));
+      }
+      return [...by].map(([k, n]) => { const [f, i] = k.split("|"); return T("{0} {1} of {2}", n, N.fac(f), N.item(i)); }).join(", ");
     };
-    // the crops under a device, named from their recipes (the planner's own text is English)
-    const crops = (d) => [...new Set(p.lines.filter((l) => l.zone === zoneName(d))
-      .map((l) => recipeOf(l.recipeId).out.map(([i, q]) => N.item(i) + " x" + q).join(" + ")))].join(", ");
-    $("devicesOut").innerHTML = p.devices.map((d) => `<tr><td>${facIco(d.facility, true)}${T("{0}x {1} on {2}", "<b>" + d.place, N.fac(d.facility) + "</b>", "<b>" + T(d.setting) + "</b>")}
-        <div class="muted" style="font-size:12px">${under(d)}: ${crops(d)}</div></td>
-        <td class="num">${fmt(d.count, 2)} / ${d.max}</td><td class="muted">${N.job(d.worker)}</td></tr>`).join("")
+    $("devicesOut").innerHTML = p.devices.map((d) => `<tr><td>${facIco(d.facility, true)}<b>${T("{0} {1}, set to {2}", d.place, N.fac(d.facility), T(d.setting))}</b>
+        <div>${T("Place it over: {0}", over(d))}</div></td><td class="muted">${N.job(d.worker)}</td></tr>`).join("")
       || `<tr><td class="muted">${S.devices === false ? T("turned off") : T("none worth placing")}</td></tr>`;
     lastPlan = p;
     renderRvInfo(p);

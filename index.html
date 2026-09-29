@@ -496,7 +496,7 @@
   // Made by hand (user, 2026-09-28): a tick box per Aniipod, and the same for the Dance Pad Polisher's
   // Growth Bud / Flower / Fruit, not an amount per day. A ticked item gets one of those facilities set to
   // it, making it whenever its ingredients are in storage; that facility is left out of the coin plan and
-  // its ingredients are reserved (grown or mined, never sold). One facility per ticked item.
+  // the planner sets aside what it takes at full speed of each ingredient. One facility per ticked item.
   // (S.aniipods keeps its name so saved setups still load.)
   const BY_HAND_FACILITIES = ["Aniipod Maker", "Dance Pad Polisher"];
   const byHandFac = (r) => BY_HAND_FACILITIES.find((f) => r.fac.some(([g]) => g === f));
@@ -590,8 +590,8 @@
     }
     inp.facilities = facs;
     inp.keep = {};
-    // the ticked Aniipods' ingredients (Clay for Pro): made by the plan, all of it for the Maker
-    inp.reserve = [...new Set(pods.flatMap((id) => recipeOf(id).in.map(([i]) => i)))];
+    // the ticked items: the planner sets aside what their facility takes at full speed
+    inp.byHand = pods;
     const t0 = performance.now();
     const p = P.plan(D, inp);
     lastInputs = inp;
@@ -608,6 +608,7 @@
     }
     $("headline").textContent = T("{0} Home Coin / hour", fmt(p.coinPerHour));
     $("subline").textContent = T("{0} per day · solved in {1} ms ({2})", fmt(p.coinPerDay), fmt(ms), T(P.solverName()));
+    if (p.capped) $("subline").textContent += T(" · best found in {0} s", P.solverTimeLimit());
 
     const u = p.aniimo.used, pool = Math.max(p.aniimo.pool, 0.0001);
     const seg = (v, c) => `<span style="width:${Math.min(100, v / pool * 100)}%;background:${c}"></span>`;
@@ -621,14 +622,10 @@
 
     lastLines = p.lines;
     renderLines();
-    // Aniipods an hour from the reserved ingredient: what the plan makes of it, over what one Aniipod takes
-    const madePerHour = (item) => p.lines.reduce((acc, l) => acc + (recipeOf(l.recipeId).out.find(([o]) => o === item) || [0, 0])[1] * l.cyclesPerHour, 0);
-    $("byHand").innerHTML = pods.map((id) => {
-      const r = recipeOf(id);
-      const perHour = Math.min(...r.in.map(([i, q]) => madePerHour(i) / q));
-      return `<div class="hint">${facIco(byHandFac(r))}${T("{0}: {1}, whenever its ingredients are in storage (not in the coin plan).",
-        "<b>" + N.fac(byHandFac(r)) + "</b>", makesHtml(id))} ${T("About {0} an hour from {1}.", fmt(perHour, 1), r.in.map(([i]) => T("{0}/h of {1}", fmt(madePerHour(i), 0), N.item(i))).join(", "))}</div>`;
-    }).join("");
+    // by-hand items: their facility at full speed (the plan sets that much of the ingredient aside)
+    $("byHand").innerHTML = (p.byHand || []).map((x) => `<div class="hint">${facIco(x.facility)}${T("{0}: {1}, whenever its ingredients are in storage (not in the coin plan).",
+      "<b>" + N.fac(x.facility) + "</b>", makesHtml(x.recipeId))} ${T("Up to {0} an hour; the plan sets aside {1}.", fmt(x.perHour, 1),
+      x.needs.map(([i, q]) => T("{0}/h of {1}", fmt(q, 1), N.item(i))).join(", "))}</div>`).join("");
     // Where each device goes, said plainly (user, 2026-09-28: "hot furnace on cherry blossom, no need to
     // justify"): how many, the setting, and the whole plots of each crop under it (the plan table's counts)
     const wholePlots = P.wholeCounts(p.lines);
@@ -770,7 +767,9 @@
       .map(([k, v]) => `<tr><td style="white-space:nowrap" data-v="${N.job(k)}"><b>${N.job(k)}</b></td><td class="num" data-v="${v}">${Math.ceil(v - 1e-6)}</td>
         <td data-v="${((j) => j ? P.candidates(pool(), j.ab, j.lv, S.bestPrismana, j.fam).length : 0)(P.parseJob(D, k))}">${who(k)}<div class="muted" style="font-size:12px">${lettersFor(k)}</div></td></tr>`).join("");
     $("roster").innerHTML = rosterHtml(p);
-    renderBest(p);
+    // the best case is a second plan: show this one first, then work it out
+    $("best").innerHTML = `<div class="muted">…</div>`;
+    setTimeout(() => renderBest(p), 30);
   }
 
   // Best case (user request): the same layout if every job had the best Aniimo in the game for it.
@@ -792,6 +791,7 @@
         ${T("({0} / day)", fmt(b.coinPerDay))}</span><span class="${gain > 0 ? "" : "muted"}">${T("{0} / hour vs your current plan", (gain >= 0 ? "+" : "") + fmt(gain))}</span></div>
       <div class="hint">${T("Same facilities, RV and options; every job gets the highest ability level that exists {0}, with a matching personality.",
         S.bestPrismana ? T("(Prismana forms included)") : T("(without Prismana forms)"))}</div>
+      ${b.capped ? `<div class="hint">${T(" · best found in {0} s", P.solverTimeLimit()).replace(/^ · /, "")}</div>` : ""}
       <table><tbody>${rows}</tbody></table>` + window.__rosterHtml(b, T("Best-case roster"));
   }
 

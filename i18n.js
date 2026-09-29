@@ -60,7 +60,7 @@
     "Tick what you make for yourself. That facility is set to it and makes it whenever the ingredients are in storage; the plan uses everything else for coin.":
       "Marque o que você faz para você. Essa instalação fica nisso e faz sempre que os ingredientes estão no armazém; o plano usa todo o resto para ganhar moedas.",
     "from {0}": "com {0}",
-    "About {0} an hour from {1}.": "Cerca de {0} por hora com {1}.",
+    "Up to {0} an hour; the plan sets aside {1}.": "Até {0} por hora; o plano separa {1}.",
     "{0}/h of {1}": "{0}/h de {1}",
     "{0} {1}: tick up to {0}.": "{0} {1}: marque até {0}.",
     "No Aniipod Maker or Dance Pad Polisher in your layout.": "Nenhum Fabricante de Aniicápsula ou Jogo de Dança Lapidador no seu layout.",
@@ -126,10 +126,11 @@
     "note": "nota",
     "keep": "guardar",
     "No plan": "Sem plano",
-    "optimal": "ótimo", "infeasible": "impossível", "unbounded": "sem limite", "iteration_limit": "limite de iterações",
+    "optimal": "ótimo", "infeasible": "impossível", "unbounded": "sem limite", "iteration_limit": "limite de iterações", "time_limit": "tempo esgotado",
     "{0} Home Coin / hour": "{0} Moedas do Lar / hora",
     "{0} per day · solved in {1} ms ({2})": "{0} por dia · resolvido em {1} ms ({2})",
     "built-in": "próprio",
+    " · best found in {0} s": " · melhor encontrado em {0} s",
     "{0} of {1} production Aniimo busy": "{0} de {1} Aniimo de produção ocupados",
     "cap {0} − kept out {1} − haulers {2}": "limite {0} − fora da produção {1} − carregadores {2}",
     "locked facilities {0}": "instalações presas {0}",
@@ -201,6 +202,8 @@
     "Needs a free Aniimo for those benches; the plan's Aniimo count does not include them.":
       "Precisa de um Aniimo livre para essas bancadas; a contagem de Aniimo do plano não inclui eles.",
     // planner messages (translated by pattern in msg())
+    "No plan found within {0} s. Try fewer options or a smaller layout.": "Nenhum plano encontrado em {0} s. Tente menos opções ou um layout menor.",
+    "best found in {0} s": "melhor encontrado em {0} s",
     "No Aniimo left for production: cap - reserved - haulers is {0}.": "Nenhum Aniimo sobra para a produção: limite - fora da produção - carregadores dá {0}.",
     "{0} level {1} needs RV {2}.": "{0} nível {1} precisa do Motorhome {2}.",
     "RV {0} allows {1} {2}, not {3}: planning with {4}.": "O Motorhome {0} permite {1} {2}, não {3}: planejando com {4}.",
@@ -260,6 +263,7 @@
       msg: (s) => {
         if (lang !== "pt") return s;
         const rules = [
+          [/^No plan found within (\d+) s\./, (m) => T("No plan found within {0} s. Try fewer options or a smaller layout.", m[1])],
           [/^No Aniimo left for production: cap - reserved - haulers is (.+)\.$/, (m) => T("No Aniimo left for production: cap - reserved - haulers is {0}.", m[1])],
           [/^(.+) level (\d+) needs RV (\d+)\.$/, (m) => T("{0} level {1} needs RV {2}.", N.fac(m[1]), m[2], m[3])],
           [/^RV (\d+) allows (\d+) (.+), not (\d+): planning with (\d+)\.$/, (m) => T("RV {0} allows {1} {2}, not {3}: planning with {4}.", m[1], m[2], N.fac(m[3]), m[4], m[5])],

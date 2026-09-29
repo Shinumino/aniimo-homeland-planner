@@ -317,6 +317,7 @@
       return Object.assign(p, { fastRv: { level: chain.level, reachable: false } });
     }
     const p = planCore(D, Object.assign({}, userInputs, { _rv: Object.assign({}, rv, { min: t * 0.999 }) }));
+    if (fastest.capped) p.capped = true;         // either step at the time cap: not proven best
     const rate = p.status === "optimal" ? p.rvRate : t;
     return Object.assign(p.status === "optimal" ? p : fastest, { fastRv: { level: chain.level, reachable: true, rate,
       readyHours: 1 / rate, upgradeHours: chain.secs / 3600, perHour: chain.mats.map(([i, n]) => [i, n * rate]),
@@ -324,6 +325,10 @@
   }
 
   function planCore(D, userInputs) {
+    // With HiGHS, plots, benches and devices are whole numbers inside one model: no rounding afterwards,
+    // so no crop "shows 0 plots" and no device sits over nothing (both found by the combination sweep,
+    // tests/sweep.test.mjs, 2026-09-29). The device passes below are for the hand-written fallback only.
+    if (HIGHS) return planOnce(D, Object.assign({}, userInputs, { _exact: true }));
     // Devices are decided on the split-bench LP (4 ms a solve); the whole-bench search (one recipe per
     // bench, up to BB_NODE_LIMIT solves) runs once, at the end, with those device decisions.
     const whole = Object.assign(defaults(D), userInputs || {}).oneRecipePerBench !== false;
@@ -367,7 +372,9 @@
     const fix = {};
     for (const d of result.devices) fix[d.facility + "|" + d.setting] = d.place;
     const final = planOnce(D, Object.assign({}, userInputs, { _deviceFix: fix }));
-    return final.status === "optimal" ? final : result;
+    if (final.status === "optimal") return final;
+    result.warnings = (result.warnings || []).concat("Could not find a plan with one recipe per bench; this plan shares benches between recipes.");
+    return result;
   }
 
   // Branch and bound over the whole-bench variables. The LP relaxation (a bench split between recipes)
@@ -388,7 +395,9 @@
   // 7 s a solve at RV 15). The hand-written solver stays as the fallback if HiGHS is missing or fails.
   let HIGHS = null;
   function useSolver(h) { HIGHS = h || null; }
-  const HIGHS_OPTIONS = { output_flag: false, time_limit: 20, mip_rel_gap: 1e-4 };
+  // 4 s cap (measured 2026-09-29 with whole plots): RV 11/12 still exact in ~1.5 s; maxed RV 16 -2.5% and
+  // RV 20 -0.4% of the true best; a 1 s cap cost RV 20 about 20%. The plan says when the cap was hit.
+  const HIGHS_OPTIONS = { output_flag: false, time_limit: 4, mip_rel_gap: 1e-4 };
   function solveHighs(obj, rows, b, ints, ones) {
     const num = (v) => String(+Number(v).toPrecision(15));
     const term = (v, j) => (v < 0 ? " - " : " + ") + num(Math.abs(v)) + " x" + j;
@@ -409,7 +418,9 @@
     try { r = HIGHS.solve(out.join("\n"), HIGHS_OPTIONS); } catch (e) { return null; }
     if (r.Status === "Infeasible") return { status: "infeasible" };
     if (r.Status === "Unbounded") return { status: "unbounded" };
-    const have = r.Status === "Optimal" || (r.Status === "Time limit reached" && isFinite(r.ObjectiveValue) && r.Columns);
+    if (r.Status === "Time limit reached" && !(isFinite(r.ObjectiveValue) && r.Columns && Object.keys(r.Columns).length))
+      return { status: "time_limit" };
+    const have = r.Status === "Optimal" || r.Status === "Time limit reached";
     if (!have) return null;
     const x = new Array(obj.length).fill(0);
     for (const [k, c] of Object.entries(r.Columns)) x[Number(k.slice(1))] = c.Primal;
@@ -418,6 +429,7 @@
     return { status: "optimal", x, value, capped: r.Status !== "Optimal" };
   }
 
+  const DEVICE_EPS = 0.01;                       // coin/h a placed device "costs" in exact mode (tie-breaker)
   const BB_NODE_LIMIT = (typeof globalThis !== "undefined" && globalThis.__bbLimit) || 80, BB_GAP = 0.001;
   function solveWhole(obj, rows, b, groups, xOfY, route) {
     const n = obj.length;
@@ -608,14 +620,47 @@
     // 2026-09-28): all Shell had to go to the Maker, none could be sold. So their ingredients stay free.
     const byHand = (j2) => cols[j2].r.out.some(([o]) => keep.some(([k]) => k === o));
     for (const j2 of whole.filter((j3) => !byHand(j3))) for (const [i2] of cols[j2].r.in) { if (!consumers.has(i2)) consumers.set(i2, []); if (!consumers.get(i2).includes(j2)) consumers.get(i2).push(j2); }
+    // Made by hand (page tick boxes: Aniipods, Growth Bud/Flower/Fruit). The facility is set to that recipe
+    // and left out of the plan; it takes its ingredients at full speed, and only that. So the plan sets
+    // aside exactly that much (Aniipod Mega: 6 Shell per Mega, 2 Megas an hour with a level-3 Aniimo =
+    // 12 Shell an hour) and at least one whole facility must make each ingredient (a Mine on Clay for
+    // Aniipod Pro, a Potato plot for Growth Bud). The rest of the ingredient is the plan's as usual.
+    // History (user, 2026-09-28): first nothing was set aside (Pro had no Clay), then ALL of the ingredient
+    // was held back, so ticking Mega could not sell a single Shell and the plan moved 5 Mines to Clay.
+    const handRecipes = (inp.byHand || []).map(Number).map((id) => D.recipes.find((r) => r.id === id)).filter(Boolean)
+      .map((r) => ({ r, c: buildColumn(D, inp, r, r.fac[0][0], null) })).filter((x) => x.c);
+    const handNeed = new Map();                    // item -> per hour the by-hand facilities take
+    for (const { r, c } of handRecipes) for (const [i, q] of r.in) handNeed.set(i, (handNeed.get(i) || 0) + q * c.perHour);
+    // "can make": some recipe in the layout outputs it (Clay is in `items` through Pottery's input even with
+    // no Mine, and the plan then failed with "cannot feed 32 Aniimo"; Fable review 2 #4)
+    for (const i of handNeed.keys()) if (!cols.some((c) => c.r.out.some(([o]) => o === i))) warnings.push("Nothing in your layout can make " + (D.items[i] ? D.items[i].n : i) + ".");
     const usedCols = [...new Set([...consumers.values()].flat())];
     const ownU = usedCols.filter((j2) => inp.facilities[cols[j2].fac].count > 1);
     const uBase = yBase + whole.length, uOwn = new Map(ownU.map((j2, k) => [j2, uBase + k]));
     const uOf = new Map(usedCols.map((j2) => [j2, uOwn.has(j2) ? uOwn.get(j2) : yOf.get(j2)]));
     // fastest upgrade: t = upgrades per hour (see plan)
     const rv = inp._rv || null;
-    const tIdx = rv ? uBase + ownU.length : -1;
-    const n = uBase + ownU.length + (rv ? 1 : 0);
+    // Never fed to a plan bench: kept items, the RV materials while planning the upgrade, and what a by-hand
+    // facility takes (it would race the bench for it, first Aniimo to arrive wins; Fable review #4).
+    const isKept = (i2) => keep.some(([k]) => k === i2) || !!(rv && rv.mats.some(([k]) => k === i2)) || handNeed.has(i2);
+    // Full flags (Fable review #3): a set bench with its ingredient in storage keeps working, so a routed
+    // ingredient is either all used by its bench, or the bench runs flat out and the rest piles up for you
+    // to sell by hand. f[j] = 1 means bench recipe j runs full (x = y). Without this the plan could route
+    // 11.2 Wool/h to a Loom, run it 1.3% of the time and throw 3.2 Wool/h away. Exact solver only: the
+    // hand-written fallback cannot branch on these, so it keeps the older, looser rule.
+    const exact = !!HIGHS;
+    const routed = exact ? [...consumers].filter(([i2]) => !isKept(i2)) : [];
+    const fCols = [...new Set(routed.flatMap(([, js]) => js))];
+    const fBase = uBase + ownU.length, fOf = new Map(fCols.map((j2, k) => [j2, fBase + k]));
+    // Surplus flags (user, 2026-09-29: "a bench that runs out of one ingredient stops; the others wait in
+    // storage, they do not rot or lose value"). s[i] = 1: routed item i piles up (and may be sold). A set
+    // bench that is not full runs out of ONE of its ingredients, so at most (its ingredients - 1) have
+    // surplus; a full bench may leave surplus of all. The first version asked a non-full bench to use up
+    // every ingredient exactly, which with whole plots cost 6-13% and was slow (Fable review 2 #1).
+    const sItems = routed.map(([i2]) => i2);
+    const sBase = fBase + fCols.length, sOf = new Map(sItems.map((i2, k) => [i2, sBase + k]));
+    const tIdx = rv ? sBase + sItems.length : -1;
+    const n = sBase + sItems.length + (rv ? 1 : 0);
     const rows = [], b = [];
     for (const f of facNames) {                    // facility counts (whole benches when one recipe each)
       const row = new Array(n).fill(0);
@@ -641,6 +686,12 @@
       cols.forEach((c, j) => { if (c.zone === z) row[j] = 1 / coverOf(c.fac); });
       row[zBase + k] = -1;
       rows.push(row); b.push(0);
+      // and a device has at least one plot under it: a tiny coin cost was not enough, the solver's tolerance
+      // (~5 coin on 50,000) let a Heat Furnace stay over nothing (sweep, 2026-09-29)
+      const some = new Array(n).fill(0);
+      cols.forEach((c, j) => { if (c.zone === z) some[j] = -1; });
+      some[zBase + k] = 1;
+      rows.push(some); b.push(0);
     });
     zoneList.forEach((z, k) => {                   // fixed devices: placed <= the count decided
       const fixed = (inp._deviceFix || {})[z.fac + "|" + z.setting];
@@ -649,8 +700,11 @@
       row[zBase + k] = 1;
       rows.push(row); b.push(fixed);
     });
-    zoneList.forEach((z, k) => {                   // whole devices: placed >= what an earlier pass rounded up to
-      const min = (inp._deviceMin || {})[z.fac + "|" + z.setting] || (inp._deviceFix || {})[z.fac + "|" + z.setting];
+    // whole devices: placed >= what an earlier pass rounded up to. Not in the final solve (_deviceFix is only
+    // an upper bound there, devices are whole numbers instead): forcing it kept a Heat Furnace with nothing
+    // under it at RV 12 (Fable review #2).
+    zoneList.forEach((z, k) => {
+      const min = (inp._deviceMin || {})[z.fac + "|" + z.setting];
       if (!min) return;
       const row = new Array(n).fill(0);
       row[zBase + k] = -1;
@@ -665,14 +719,8 @@
     }
     const itemBase = rows.length;
     const keepOf = new Map(keep);
-    // Reserved ingredients (user, 2026-09-28: "if I tick Aniipod Pro I still have only Shell Mines, but Pro
-    // needs Clay"): a ticked Aniipod's Maker takes its ingredient whenever there is some, so the plan must
-    // make it on at least one whole facility (a Mine on Clay, a plot of Potato for Growth Bud; "at least 1
-    // an hour" was 4% of a Potato plot, shown as 0 plots), and none of it is sold, eaten or fed to a bench.
-    const reserve = new Set((inp.reserve || []).map(Number));
-    for (const i of reserve) if (!items.has(i)) warnings.push("Nothing in your layout can make " + (D.items[i] ? D.items[i].n : i) + ".");
-    for (const [i, k] of items) { rows.push(new Array(n).fill(0)); b.push(-(keepOf.get(i) || 0)); }  // made >= used + sold + kept
-    for (const i of reserve) {                     // facilities (plots, Mines) making it >= 1
+    for (const [i, k] of items) { rows.push(new Array(n).fill(0)); b.push(-(keepOf.get(i) || 0) - (handNeed.get(i) || 0)); }  // made >= used + sold + kept + by hand
+    for (const i of handNeed.keys()) {             // facilities (plots, Mines) making it >= 1
       const row = new Array(n).fill(0);
       cols.forEach((c, j) => { if (c.r.out.some(([o]) => o === i)) row[j] = -1; });
       if (row.some((v) => v)) { rows.push(row); b.push(-1); }
@@ -692,7 +740,10 @@
     const workerRow = new Array(n).fill(0);        // Aniimo budget: every placed device keeps one busy
     cols.forEach((c, j) => { workerRow[j] = c.workerHours; });
     zoneList.forEach((z, k) => { workerRow[zBase + k] = 1; });
-    rows.push(workerRow); b.push(Math.max(0, pool));
+    // each by-hand facility keeps one Aniimo working it (the Maker runs flat out on a Lightning Aniimo):
+    // those come out of the budget (Fable review #1)
+    const handAniimo = handRecipes.reduce((a, { c }) => a + c.workerHours, 0);
+    rows.push(workerRow); b.push(Math.max(0, pool) - handAniimo);
 
     for (const [j2, u] of uOwn) {                  // y <= count * u
       const row = new Array(n).fill(0); row[yOf.get(j2)] = 1; row[u] = -inp.facilities[cols[j2].fac].count; rows.push(row); b.push(0);
@@ -700,31 +751,48 @@
     // most of an item one hour can hold: everything that makes it, flat out (the M of the sell rows)
     const most = (i2) => cols.reduce((acc, c) => acc + c.r.out.filter(([o]) => o === i2).reduce((a, [, q]) => a + q, 0)
       * c.perHour * (inp.facilities[c.fac] ? inp.facilities[c.fac].count : 0), 0) + 1;
+    for (const [j2, f] of fOf) {                   // f = 1: x >= y (the bench runs full)
+      const cnt = inp.facilities[cols[j2].fac].count;
+      const row = new Array(n).fill(0); row[j2] = -1; row[yOf.get(j2)] = 1; row[f] = cnt; rows.push(row); b.push(cnt);
+      // and only a recipe that is set can be "full": otherwise an unused recipe (0 of 0 benches) switched the
+      // rule off and Strawberry was sold while its Tanghulu bench ran 10% (found by the sweep, 2026-09-29)
+      const set = new Array(n).fill(0); set[f] = 1; set[uOf.get(j2)] = -1; rows.push(set); b.push(0);
+      // a set, not-full bench leaves surplus in at most K - 1 of its K ingredients:
+      // sum s - f - K (1 - u) <= K - 1
+      const ins = cols[j2].r.in.map(([i2]) => i2).filter((i2) => sOf.has(i2));
+      if (ins.length) {
+        const K = ins.length;
+        const lim = new Array(n).fill(0);
+        for (const i2 of ins) lim[sOf.get(i2)] += 1;
+        lim[f] -= 1; lim[uOf.get(j2)] += K;
+        rows.push(lim); b.push(2 * K - 1);
+      }
+    }
     for (const [i2, js] of consumers) {
-      // kept items, and the RV materials while planning the upgrade, never feed a bench
-      const kept = keep.some(([k]) => k === i2) || (rv && rv.mats.some(([k]) => k === i2)) || reserve.has(i2);
+      const kept = isKept(i2);
       const si = sellable.indexOf(i2), ei = foods.indexOf(i2);
       const market = si >= 0 || ei >= 0;
+      if (exact && !kept) {                        // surplus of a routed item only when flagged: surplus <= M (1 - routed) + M s
+        const M = most(i2);
+        const row = rows[itemBase + items.get(i2)].map((v) => -v);
+        for (const j2 of js) row[uOf.get(j2)] += M;
+        row[sOf.get(i2)] -= M;
+        rows.push(row); b.push(M);
+      }
       if (js.length < 2 && !market && !kept) continue;
       if (kept || !market || js.length > 1) {     // one recipe per ingredient (none for kept items)
         const row = new Array(n).fill(0); for (const j2 of js) row[uOf.get(j2)] = 1; rows.push(row); b.push(kept ? 0 : 1);
       }
       if (!market || kept) continue;
-      const M = most(i2);                         // routed: sold + eaten <= M * (1 - routed)
+      const M = most(i2);                         // routed: sold + eaten <= M (1 - routed), unless it has surplus
       const row = new Array(n).fill(0);
       if (si >= 0) row[nx + si] = 1;
       if (ei >= 0) row[nx + ns + nb + ei] = 1;
       for (const j2 of js) row[uOf.get(j2)] = M;
+      if (sOf.has(i2)) row[sOf.get(i2)] = -M;
       rows.push(row); b.push(M);
     }
 
-    for (const i of reserve) {                     // a reserved ingredient is never sold or eaten
-      const row = new Array(n).fill(0);
-      const si = sellable.indexOf(i), ei = foods.indexOf(i);
-      if (si >= 0) row[nx + si] = 1;
-      if (ei >= 0) row[nx + ns + nb + ei] = 1;
-      if (si >= 0 || ei >= 0) { rows.push(row); b.push(0); }
-    }
     const obj = new Array(n).fill(0);
     sellable.forEach((i, k) => { obj[nx + k] = price(D, inp, i); });
     buyable.forEach((i, k) => { obj[nx + ns + k] = -seedCost.get(i); });
@@ -756,8 +824,19 @@
       ysOf: new Map([...uOf].map(([j2, u]) => [u, [yOf.get(j2)]])),
       allU: [...new Set(uOf.values())],
     };
-    const ints = [...yOf.values(), ...uOwn.values()];
-    let res = HIGHS ? solveHighs(obj, rows, b, ints, [...uOwn.values()]) : null;
+    // exact mode: devices and crop plots are whole numbers too; a device costs a hair of coin so an
+    // unneeded one is never placed just because its Aniimo happens to be free
+    const devInts = inp._deviceFix || inp._exact ? zoneList.map((z, k) => zBase + k) : [];
+    const cropInts = inp._exact ? cols.map((c, j) => (c.kind === "crop" ? j : -1)).filter((j) => j >= 0) : [];
+    if (inp._exact) zoneList.forEach((z, k) => { obj[zBase + k] -= DEVICE_EPS; });
+    const ints = [...yOf.values(), ...uOwn.values(), ...fOf.values(), ...sOf.values(), ...devInts, ...cropInts];
+    let res = HIGHS ? solveHighs(obj, rows, b, ints, [...uOwn.values(), ...fOf.values(), ...sOf.values()]) : null;
+    // HiGHS at its time cap with nothing found: say so. Falling back to the hand-written solver ran a
+    // different model and once took 49 s (Fable review 2 #2). Only a missing/broken HiGHS falls back.
+    if (res && res.status === "time_limit") {
+      warnings.push("No plan found within " + HIGHS_OPTIONS.time_limit + " s. Try fewer options or a smaller layout.");
+      return { status: "time_limit", warnings, inputs: inp };
+    }
     if (!res) res = whole.length ? solveWhole(obj, rows, b, groups, new Map([...yOf].map(([j, y]) => [y, j])), route) : LP.solve(obj, rows, b);
     if (res.status === "infeasible") {
       const why = [];
@@ -803,7 +882,7 @@
       return { facility: z.fac, setting: z.setting, count: placed, place: Math.ceil(placed - 1e-6), worker: z.worker, max: z.max, under, crops };
     }).filter((d) => d.count > 1e-6);
     const zoneSeats = devices.reduce((acc, d) => acc + d.count, 0);
-    const used = { dedicated: 0, bench: 0, crop: 0, devices: zoneSeats };
+    const used = { dedicated: 0, bench: 0, crop: 0, devices: zoneSeats, byHand: handAniimo };
     for (const l of lines) used[l.kind] += l.aniimo;
     const abilityNeeds = {};                       // job -> Aniimo-hours per hour (1 = one Aniimo full time)
     const fullTime = {};                           // part of that which is one indivisible full-time seat
@@ -819,17 +898,30 @@
       abilityNeeds[d.worker] = (abilityNeeds[d.worker] || 0) + d.place;
       fullTime[d.worker] = (fullTime[d.worker] || 0) + d.place;
     }
+    for (const { r, c } of handRecipes) {          // a by-hand facility is a full-time seat for its worker
+      const op = mainOp(r);
+      if (!op) continue;
+      const job = jobName(D, op.ab, op.lv, r.fam);
+      abilityNeeds[job] = (abilityNeeds[job] || 0) + c.workerHours;
+      fullTime[job] = (fullTime[job] || 0) + c.workerHours;
+    }
+    // coin per hour is what is sold minus what is bought, whatever the solver's objective was (the fastest-
+    // upgrade step 1 maximizes speed; its objective is not coin; Fable review #6)
+    const coin = sold.reduce((a, x2) => a + x2.coin, 0) - bought.reduce((a, x2) => a + x2.coin, 0);
     return {
       status: "optimal", inputs: inp, warnings,
+      capped: !!res.capped,                        // the solver stopped at its time cap: best found, not proven best
       rvRate: rv ? res.x[tIdx] : null,
-      coinPerHour: res.value, coinPerDay: res.value * 24,
+      // by-hand items at full speed, per hour (what the page shows under the plan)
+      byHand: handRecipes.map(({ r, c }) => ({ recipeId: r.id, facility: r.fac[0][0], perHour: c.perHour * r.out[0][1], needs: r.in.map(([i, q]) => [i, q * c.perHour]) })),
+      coinPerHour: coin, coinPerDay: coin * 24,
       lines, sold, bought, eaten, devices, fullTime,
       kept: keep.map(([i, h]) => ({ item: name(i), id: i, perDay: h * 24 })),
       food: { eaters, needPerHour: foodNeed,
               // how long the eaten mix lasts per item fed (for "how often do I refill")
               hoursPerItem: eaten.length ? eaten.reduce((acc, e) => acc + e.food, 0) / eaten.reduce((acc, e) => acc + e.perHour, 0) / (foodNeed || 1) : 0 },
       aniimo: { cap: inp.cap, reserved: inp.reserved, haulers: inp.haulers, pool, used,
-                total: used.dedicated + used.bench + used.crop + used.devices },
+                total: used.dedicated + used.bench + used.crop + used.devices + used.byHand },
       abilityNeeds,
     };
   }
@@ -1081,6 +1173,6 @@
   }
 
   const api = { plan, rvLimits, wholeCounts, idealPersonality, alternatives, defaults, workPerMinute, recipeChoices, candidates, bestAbilityLevels, bestCase, roster, formLabel, parseJob, familyBest, released, rvChain, rvTime, useSolver,
-    solverName: () => (HIGHS ? "HiGHS" : "built-in") };
+    solverName: () => (HIGHS ? "HiGHS" : "built-in"), solverTimeLimit: () => HIGHS_OPTIONS.time_limit };
   if (typeof module !== "undefined") module.exports = api; else root.Planner = api;
 })(this);

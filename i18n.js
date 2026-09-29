@@ -82,8 +82,12 @@
     "Your setup is also remembered in this browser.": "Sua configuração também fica salva neste navegador.",
     "Aniimo budget": "Aniimo disponíveis",
     "The plan": "O plano",
-    "How many of each facility to set to each recipe. Crops and locked facilities are whole plots (they add up to what you have); a bench used part of the time shows how busy it is.":
-      "Quantas de cada instalação colocar em cada receita. Plantações e instalações presas são lotes inteiros (somam o que você tem); uma bancada usada parte do tempo mostra o quanto fica ocupada.",
+    "How many of each facility to set to each recipe, and how busy a bench is. Coin/h is what that row's product earns after its ingredients; a row that feeds another row shows where it goes. The rows and the lines under the table add up to the total at the top.":
+      "Quantas de cada instalação colocar em cada receita e o quanto cada bancada fica ocupada. Moedas/h é o que o produto da linha rende depois dos ingredientes; uma linha que abastece outra mostra para onde vai. As linhas e os itens abaixo da tabela somam o total lá em cima.",
+    "{0} takes {1} {2}/h": "{0} usa {1} {2}/h",
+    "Aniimo eat {0} {1}/h": "Aniimo comem {0} {1}/h",
+    "Left in storage: {0} {1}/h": "Fica no armazém: {0} {1}/h",
+    "Total": "Total",
     "How many": "Quantos",
     "Makes each cycle": "Faz por ciclo",
     "Per hour": "Por hora",

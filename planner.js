@@ -1123,6 +1123,68 @@
     return base;
   }
 
+  // Money per plan row (user, 2026-09-29: "the sum of the table is more than the 71 thousand at the top").
+  // The old Coin/h was the value a row adds at sell prices, so the Potato row counted Potato nobody sells.
+  // Now: costs flow down the chain (seeds, then what each row takes from the rows before it, split over a
+  // row's outputs by their value), and a row earns only on the part of its output that leaves the plan.
+  // A row whose output all goes to other rows shows 0 and says what it feeds. Under the table: the value
+  // of what leaves the plan without being sold (the Aniipod Maker's Shell, what the Aniimo eat). Then
+  // sum(rows) - sum(under) = coin/h at the top, which tests/sweep.test.mjs checks on every plan.
+  function lineMoney(D, p) {
+    const inp = p.inputs || {};
+    const val = (i) => price(D, Object.assign({ values: {} }, inp), i);
+    const rec = (l) => D.recipes.find((r) => r.id === l.recipeId);
+    const outs = (l) => rec(l).out.map(([i, q]) => [i, q * l.cyclesPerHour]);
+    const ins = (l) => rec(l).in.map(([i, q]) => [i, q * l.cyclesPerHour]);
+    const made = new Map(), used = new Map();
+    for (const l of p.lines) {
+      for (const [i, q] of outs(l)) made.set(i, (made.get(i) || 0) + q);
+      for (const [i, q] of ins(l)) used.set(i, (used.get(i) || 0) + q);
+    }
+    const buyCost = new Map((p.bought || []).map((x) => [x.id, x.perHour > 0 ? x.coin / x.perHour : 0]));
+    const costIn = new Map();                      // item -> cost carried into everything made of it
+    const producers = (i) => p.lines.filter((l) => rec(l).out.some(([o]) => o === i));
+    const rows = new Map();
+    const ext = (i) => (made.get(i) ? Math.max(0, made.get(i) - (used.get(i) || 0)) / made.get(i) : 0);
+    let left = p.lines.slice();
+    for (let pass = 0; left.length && pass <= p.lines.length + 1; pass++) {
+      const last = pass === p.lines.length + 1;      // a loop in the chain: take the rest as they are
+      left = left.filter((l) => {
+        const ready = ins(l).every(([i]) => !made.has(i) || producers(i).every((m) => m === l || rows.has(m)));
+        if (!ready && !last) return true;
+        const cost = ins(l).reduce((a, [i, q]) => a + q * (made.has(i) ? (costIn.get(i) || 0) / made.get(i) : (buyCost.get(i) || 0)), 0);
+        const o = outs(l);
+        const worth = o.map(([i, q]) => q * val(i));
+        const total = worth.reduce((a, v) => a + v, 0);
+        let money = 0;
+        o.forEach(([i, q], k) => {
+          const share = total > 0 ? worth[k] / total : 1 / o.length;
+          costIn.set(i, (costIn.get(i) || 0) + cost * share);
+          money += ext(i) * (q * val(i) - cost * share);
+        });
+        const feeds = [...new Set(p.lines.filter((m) => m !== l && rec(m).in.some(([i]) => o.some(([x]) => x === i))).map((m) => m.recipeId))];
+        rows.set(l, { money, feeds });
+        return false;
+      });
+    }
+    const under = [];
+    const hand = new Map();
+    for (const h of p.byHand || []) for (const [i, q] of h.needs) hand.set(i, (hand.get(i) || 0) + q);
+    for (const [i, mk] of made) {
+      const out = Math.max(0, mk - (used.get(i) || 0));
+      if (!(out > 1e-9) || !(val(i) > 0)) continue;
+      const sold = ((p.sold || []).find((x) => x.id === i) || { perHour: 0 }).perHour;
+      const eaten = ((p.eaten || []).find((x) => x.id === i) || { perHour: 0 }).perHour;
+      const h = Math.min(hand.get(i) || 0, out);
+      if (h > 1e-6) under.push({ kind: "byHand", id: i, perHour: h, coin: h * val(i),
+        facility: ((p.byHand || []).find((x) => x.needs.some(([n]) => n === i)) || {}).facility });
+      if (eaten > 1e-6) under.push({ kind: "eaten", id: i, perHour: eaten, coin: eaten * val(i) });
+      const rest = out - sold - eaten - h;
+      if (rest * val(i) > 0.5) under.push({ kind: "leftover", id: i, perHour: rest, coin: rest * val(i) });
+    }
+    return { rows, under };
+  }
+
   // Whole plots per plan line. Rounded in two steps so a device never covers more plots than it can:
   // first the plots under each device setting (and with no device), adding up to the facility's rounded
   // total; then the crops inside each of those. The LP keeps every device area <= its whole coverage, so
@@ -1173,6 +1235,6 @@
   }
 
   const api = { plan, rvLimits, wholeCounts, idealPersonality, alternatives, defaults, workPerMinute, recipeChoices, candidates, bestAbilityLevels, bestCase, roster, formLabel, parseJob, familyBest, released, rvChain, rvTime, useSolver,
-    solverName: () => (HIGHS ? "HiGHS" : "built-in"), solverTimeLimit: () => HIGHS_OPTIONS.time_limit };
+    lineMoney, solverName: () => (HIGHS ? "HiGHS" : "built-in"), solverTimeLimit: () => HIGHS_OPTIONS.time_limit };
   if (typeof module !== "undefined") module.exports = api; else root.Planner = api;
 })(this);

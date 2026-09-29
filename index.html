@@ -205,12 +205,12 @@
     </section>
     <section class="panel">
       <h2>The plan</h2>
-      <div class="hint">How many of each facility to set to each recipe. Crops and locked facilities are whole plots
-        (they add up to what you have); a bench used part of the time shows how busy it is.</div>
+      <div class="hint">How many of each facility to set to each recipe, and how busy a bench is. Coin/h is what that row's product earns after its ingredients; a row that feeds another row shows where it goes. The rows and the lines under the table add up to the total at the top.</div>
       <div class="tablewrap"><table><thead><tr><th data-sort="facility">Facility</th><th class="num" data-sort="count">How many</th>
         <th data-sort="makes">Makes each cycle</th><th class="num" data-sort="perhour">Per hour</th><th class="num" data-sort="cycle">Cycle</th>
         <th class="num" data-sort="coin">Coin/h</th><th data-sort="worker">Worker</th></tr></thead>
         <tbody id="lines"></tbody></table></div>
+      <div id="planTotal"></div>
       <div id="byHand"></div>
     </section>
     <div class="grid2">
@@ -621,7 +621,14 @@
         <span><i style="background:var(--bar3)"></i>${T("crop tasks {0}", fmt(u.crop, 1))}</span></div>`;
 
     lastLines = p.lines;
+    lastMoney = P.lineMoney(D, p);
     renderLines();
+    // under the table: what leaves the plan without being sold, then the total (= the headline)
+    const underLabel = (u) => u.kind === "byHand" ? T("{0} takes {1} {2}/h", N.fac(u.facility || ""), fmt(u.perHour, 1), N.item(u.id))
+      : u.kind === "eaten" ? T("Aniimo eat {0} {1}/h", fmt(u.perHour, 1), N.item(u.id)) : T("Left in storage: {0} {1}/h", fmt(u.perHour, 1), N.item(u.id));
+    $("planTotal").innerHTML = `<table style="width:auto;margin-left:auto">${lastMoney.under.map((u) =>
+      `<tr><td class="muted">${itemIco(u.id)}${underLabel(u)}</td><td class="num" data-coin="${u.coin}">−${fmt(u.coin)}</td></tr>`).join("")}
+      <tr><td><b>${T("Total")}</b></td><td class="num"><b>${T("{0} Home Coin / hour", fmt(p.coinPerHour))}</b></td></tr></table>`;
     // by-hand items: their facility at full speed (the plan sets that much of the ingredient aside)
     $("byHand").innerHTML = (p.byHand || []).map((x) => `<div class="hint">${facIco(x.facility)}${T("{0}: {1}, whenever its ingredients are in storage (not in the coin plan).",
       "<b>" + N.fac(x.facility) + "</b>", makesHtml(x.recipeId))} ${T("Up to {0} an hour; the plan sets aside {1}.", fmt(x.perHour, 1),
@@ -648,14 +655,22 @@
 
   // Plan table sorting (user request): click a header to sort, click again to reverse. The choice is
   // kept in this browser; default is Coin/h, highest first.
-  let lastLines = [];
+  let lastLines = [], lastMoney = null;
   const SORT_KEYS = {
     facility: (l) => N.fac(l.facility) + " " + (l.zone || ""), count: (l) => l.count,
     makes: (l) => { const r = recipeOf(l.recipeId); return r ? N.item(r.out[0][0]) : ""; },
-    cycle: (l) => l.minutesPerCycle, coin: (l) => l.lineValue, worker: (l) => N.job(l.worker),
+    cycle: (l) => l.minutesPerCycle, coin: (l) => (lastMoney && lastMoney.rows.get(l) ? lastMoney.rows.get(l).money : l.lineValue), worker: (l) => N.job(l.worker),
     perhour: (l) => l.cyclesPerHour,
   };
   S.sort = S.sort || { key: "coin", dir: -1 };
+  // Coin/h cell: money for this row, or where its product goes when all of it feeds other rows
+  const coinCell = (l) => {
+    const m = lastMoney && lastMoney.rows.get(l);
+    if (!m) return fmt(l.lineValue);
+    if (Math.abs(m.money) < 0.5 && m.feeds.length)
+      return `<span class="muted">→ ${[...new Set(m.feeds.map((id) => N.item(recipeOf(id).out[0][0])))].join(", ")}</span>`;
+    return fmt(m.money);
+  };
   function renderLines() {
     const get = SORT_KEYS[S.sort.key] || SORT_KEYS.coin;
     const rows = lastLines.slice().sort((a, b) => {
@@ -683,7 +698,7 @@
       return `<tr><td>${facIco(l.facility, true)}${N.fac(l.facility)}${l.zone ? ' <span class="pill">' + N.zone(l.zone) + "</span>" : ""}</td>
       <td class="num" style="white-space:nowrap">${many}</td><td>${makesHtml(l.recipeId)}${l.note ? ` <span class="pill">${T("note")}</span>` : ""}</td>
       <td class="num" style="white-space:nowrap">${perHour}</td>
-      <td class="num">${T("{0} min", fmt(l.minutesPerCycle, 1))}</td><td class="num">${fmt(l.lineValue)}</td><td class="muted">${N.job(l.worker)}</td></tr>`;
+      <td class="num">${T("{0} min", fmt(l.minutesPerCycle, 1))}</td><td class="num">${coinCell(l)}</td><td class="muted">${N.job(l.worker)}</td></tr>`;
     }).join("");
   }
   document.addEventListener("click", (e) => {

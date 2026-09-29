@@ -667,9 +667,10 @@
   const coinCell = (l) => {
     const m = lastMoney && lastMoney.rows.get(l);
     if (!m) return fmt(l.lineValue);
-    if (Math.abs(m.money) < 0.5 && m.feeds.length)
-      return `<span class="muted">→ ${[...new Set(m.feeds.map((id) => N.item(recipeOf(id).out[0][0])))].join(", ")}</span>`;
-    return fmt(m.money);
+    const where = m.feeds.length ? `<span class="muted">→ ${[...new Set(m.feeds.map((id) => N.item(recipeOf(id).out[0][0])))].join(", ")}</span>` : "";
+    if (Math.abs(m.money) < 0.5 && where) return where;
+    // part goes on to another row, the rest is sold: both (user: "Sugarcane has no arrow, it becomes Rock Candy")
+    return fmt(m.money) + (where ? " " + where : "");
   };
   function renderLines() {
     const get = SORT_KEYS[S.sort.key] || SORT_KEYS.coin;

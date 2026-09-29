@@ -603,7 +603,11 @@
     //   sold(i) + eaten(i) <= M * (1 - routed(i))
     // (An r[i] variable per item and u <= 1 rows made it 550 rows and 14 s; this form is ~300.)
     const consumers = new Map();                   // item -> bench columns that use it
-    for (const j2 of whole) for (const [i2] of cols[j2].r.in) { if (!consumers.has(i2)) consumers.set(i2, []); if (!consumers.get(i2).includes(j2)) consumers.get(i2).push(j2); }
+    // "Make for yourself" recipes are not set and left: you switch the Aniipod Maker to Mega when you want
+    // Aniipods. Routing them made 1 Aniipod Mega a day cost 4,266 coin/h (a friend's RV 10 setup,
+    // 2026-09-28): all Shell had to go to the Maker, none could be sold. So their ingredients stay free.
+    const byHand = (j2) => cols[j2].r.out.some(([o]) => keep.some(([k]) => k === o));
+    for (const j2 of whole.filter((j3) => !byHand(j3))) for (const [i2] of cols[j2].r.in) { if (!consumers.has(i2)) consumers.set(i2, []); if (!consumers.get(i2).includes(j2)) consumers.get(i2).push(j2); }
     const usedCols = [...new Set([...consumers.values()].flat())];
     const ownU = usedCols.filter((j2) => inp.facilities[cols[j2].fac].count > 1);
     const uBase = yBase + whole.length, uOwn = new Map(ownU.map((j2, k) => [j2, uBase + k]));
@@ -622,6 +626,14 @@
       const row = new Array(n).fill(0);
       row[j] = 1; row[y] = -1;
       rows.push(row); b.push(0);
+      // A locked facility (Mine, Well, pens) keeps its Aniimo and works non-stop: set to a recipe, it runs
+      // flat out (x = y). Before, a Mine could be set to Shell and run 1.5% of the time for a few Shells,
+      // which the table showed as "Mine 0" (a friend's RV 10 setup, 2026-09-28).
+      if (cols[j].kind === "dedicated") {
+        const full = new Array(n).fill(0);
+        full[j] = -1; full[y] = 1;
+        rows.push(full); b.push(0);
+      }
     }
     const cover = inp.deviceCoverage || {};
     zoneList.forEach((z, k) => {                   // crops under a device setting <= what those devices cover

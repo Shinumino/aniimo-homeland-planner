@@ -577,6 +577,8 @@
     }
     inp.facilities = facs;
     inp.keep = {};
+    // the ticked Aniipods' ingredients (Clay for Pro): made by the plan, all of it for the Maker
+    inp.reserve = [...new Set(pods.flatMap((id) => recipeOf(id).in.map(([i]) => i)))];
     const t0 = performance.now();
     const p = P.plan(D, inp);
     lastInputs = inp;
@@ -606,8 +608,14 @@
 
     lastLines = p.lines;
     renderLines();
-    $("byHand").innerHTML = pods.map((id) => `<div class="hint">${facIco("Aniipod Maker")}${T("{0}: {1}, whenever its ingredients are in storage (not in the coin plan).",
-      "<b>" + N.fac("Aniipod Maker") + "</b>", makesHtml(id))}</div>`).join("");
+    // Aniipods an hour from the reserved ingredient: what the plan makes of it, over what one Aniipod takes
+    const madePerHour = (item) => p.lines.reduce((acc, l) => acc + (recipeOf(l.recipeId).out.find(([o]) => o === item) || [0, 0])[1] * l.cyclesPerHour, 0);
+    $("byHand").innerHTML = pods.map((id) => {
+      const r = recipeOf(id);
+      const perHour = Math.min(...r.in.map(([i, q]) => madePerHour(i) / q));
+      return `<div class="hint">${facIco("Aniipod Maker")}${T("{0}: {1}, whenever its ingredients are in storage (not in the coin plan).",
+        "<b>" + N.fac("Aniipod Maker") + "</b>", makesHtml(id))} ${T("About {0} an hour from {1}.", fmt(perHour, 1), r.in.map(([i]) => T("{0}/h of {1}", fmt(madePerHour(i), 0), N.item(i))).join(", "))}</div>`;
+    }).join("");
     // plots under each device: the same whole plots the plan table shows
     const wholePlots = P.wholeCounts(p.lines);
     const zoneName = (d) => d.facility + " (" + d.setting + ")";

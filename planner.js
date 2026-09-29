@@ -418,6 +418,7 @@
     return { status: "optimal", x, value, capped: r.Status !== "Optimal" };
   }
 
+  const RESERVE_MIN = 1;                         // reserved ingredient made per hour, at least
   const BB_NODE_LIMIT = (typeof globalThis !== "undefined" && globalThis.__bbLimit) || 80, BB_GAP = 0.001;
   function solveWhole(obj, rows, b, groups, xOfY, route) {
     const n = obj.length;
@@ -665,7 +666,13 @@
     }
     const itemBase = rows.length;
     const keepOf = new Map(keep);
-    for (const [i, k] of items) { rows.push(new Array(n).fill(0)); b.push(-(keepOf.get(i) || 0)); }  // made >= used + sold + kept
+    // Reserved ingredients (user, 2026-09-28: "if I tick Aniipod Pro I still have only Shell Mines, but Pro
+    // needs Clay"): a ticked Aniipod's Maker takes its ingredient whenever there is some, so the plan must
+    // make some (>= RESERVE_MIN an hour, which sets a whole Mine to Clay), and none of it is sold, eaten
+    // or fed to a bench.
+    const reserve = new Set((inp.reserve || []).map(Number));
+    for (const i of reserve) if (!items.has(i)) warnings.push("Nothing in your layout can make " + (D.items[i] ? D.items[i].n : i) + ".");
+    for (const [i, k] of items) { rows.push(new Array(n).fill(0)); b.push(-(keepOf.get(i) || 0) - (reserve.has(i) ? RESERVE_MIN : 0)); }  // made >= used + sold + kept
     cols.forEach((c, j) => {
       for (const [i, q] of c.r.in) rows[itemBase + items.get(i)][j] += q * c.perHour;
       for (const [i, q] of c.r.out) rows[itemBase + items.get(i)][j] -= q * c.perHour;
@@ -691,7 +698,7 @@
       * c.perHour * (inp.facilities[c.fac] ? inp.facilities[c.fac].count : 0), 0) + 1;
     for (const [i2, js] of consumers) {
       // kept items, and the RV materials while planning the upgrade, never feed a bench
-      const kept = keep.some(([k]) => k === i2) || (rv && rv.mats.some(([k]) => k === i2));
+      const kept = keep.some(([k]) => k === i2) || (rv && rv.mats.some(([k]) => k === i2)) || reserve.has(i2);
       const si = sellable.indexOf(i2), ei = foods.indexOf(i2);
       const market = si >= 0 || ei >= 0;
       if (js.length < 2 && !market && !kept) continue;
@@ -707,6 +714,13 @@
       rows.push(row); b.push(M);
     }
 
+    for (const i of reserve) {                     // a reserved ingredient is never sold or eaten
+      const row = new Array(n).fill(0);
+      const si = sellable.indexOf(i), ei = foods.indexOf(i);
+      if (si >= 0) row[nx + si] = 1;
+      if (ei >= 0) row[nx + ns + nb + ei] = 1;
+      if (si >= 0 || ei >= 0) { rows.push(row); b.push(0); }
+    }
     const obj = new Array(n).fill(0);
     sellable.forEach((i, k) => { obj[nx + k] = price(D, inp, i); });
     buyable.forEach((i, k) => { obj[nx + ns + k] = -seedCost.get(i); });

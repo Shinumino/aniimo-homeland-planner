@@ -60,6 +60,8 @@
     "Tick the Aniipods you make. The Aniipod Maker is set to them and makes them whenever the ingredients are in storage; the plan uses everything else for coin.":
       "Marque as Aniicápsulas que você faz. O Fabricante de Aniicápsula fica nelas e faz sempre que os ingredientes estão no armazém; o plano usa todo o resto para ganhar moedas.",
     "from {0}": "com {0}",
+    "About {0} an hour from {1}.": "Cerca de {0} por hora com {1}.",
+    "{0}/h of {1}": "{0}/h de {1}",
     "{0} Aniipod Maker(s): tick up to {0}.": "{0} Fabricante(s) de Aniicápsula: marque até {0}.",
     "No Aniipod Maker in your layout.": "Nenhum Fabricante de Aniicápsula no seu layout.",
     "{0}: {1}, whenever its ingredients are in storage (not in the coin plan).": "{0}: {1}, sempre que os ingredientes estão no armazém (fora do plano de moedas).",

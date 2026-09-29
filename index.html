@@ -166,9 +166,8 @@
 
     <section class="panel">
       <h2>Make for yourself</h2>
-      <div class="hint">Things you want to keep, not sell. The plan sets aside the Mine and Maker time to make them,
-        then earns as much as it can with the rest.</div>
-      <div id="keep"></div>
+      <div class="hint">Tick the Aniipods you make. The Aniipod Maker is set to them and makes them whenever the ingredients are in storage; the plan uses everything else for coin.</div>
+      <div id="aniipods"></div>
       <label class="check"><input type="checkbox" id="moonrayWheat"> I have Moonray Wheat to buy event seeds
         (Moondew Radish, Waxing Moon Pepper)</label>
     </section>
@@ -212,6 +211,7 @@
         <th data-sort="makes">Makes each cycle</th><th class="num" data-sort="perhour">Per hour</th><th class="num" data-sort="cycle">Cycle</th>
         <th class="num" data-sort="coin">Coin/h</th><th data-sort="worker">Worker</th></tr></thead>
         <tbody id="lines"></tbody></table></div>
+      <div id="byHand"></div>
     </section>
     <div class="grid2">
       <section class="panel"><h2>Environment devices to place</h2><table><tbody id="devicesOut"></tbody></table>
@@ -280,7 +280,7 @@
   // Default setup = the layout in the user's original optimizer link (RV 11).
   const DEFAULT = {
     rv: 11, cap: 32, reserved: 2, haulers: 2, homeAniimo: "", minFoodPerItem: 0, workerMaxLevel: 3, personality: false,
-    watered: true, feed: true, eventSeeds: true, oneRecipePerBench: true, unreleased: ["Jabster"], rvGoal: { level: "" }, cropOpOverhead: 0.5, notes: [], keep: {}, moonrayWheat: false,
+    watered: true, feed: true, eventSeeds: true, oneRecipePerBench: true, unreleased: ["Jabster"], rvGoal: { level: "" }, cropOpOverhead: 0.5, notes: [], keep: {}, aniipods: [], moonrayWheat: false,
     modules: { "Ecological Module": 3, "Kitchen Module": 4, "Resource Detector": 2, "Crafting Module": 3 },
     facilities: {
       "Aniipod Maker": { count: 1, level: 3 }, "Dance Pad Polisher": { count: 1, level: 3 }, "Blazing Stove": { count: 1, level: 2 },
@@ -376,6 +376,7 @@
         const maxCount = P.rvLimits(D, S.rv).counts[n];
         if (el.dataset.k === "count" && maxCount != null && v > maxCount) { v = maxCount; el.value = v; }
         S.facilities[n][el.dataset.k] = v;
+        if (n === "Aniipod Maker") renderAniipods();
         renderRecipes(); recalc();
       };
     });
@@ -492,13 +493,35 @@
     $("rvInfo").innerHTML = out;
   }
 
-  function renderKeep() {
-    S.keep = S.keep || {};
-    const pods = Object.entries(D.items).filter(([, it]) => /^Aniipod/.test(it.n)).sort((a, b) => a[0] - b[0]);
-    $("keep").innerHTML = pods.map(([i]) => `<label class="row"><span>${itemIco(i)}${T("{0} per day", N.item(i))}</span>
-      <input type="number" min="0" data-keep="${i}" value="${S.keep[i] ?? ""}" placeholder="0"></label>`).join("");
-    $("keep").querySelectorAll("[data-keep]").forEach((el) => {
-      el.oninput = () => { if (el.value === "" || Number(el.value) === 0) delete S.keep[el.dataset.keep]; else S.keep[el.dataset.keep] = Number(el.value); recalc(); };
+  // Aniipods (user, 2026-09-28): a tick box per Aniipod, not an amount per day. A ticked Aniipod gets an
+  // Aniipod Maker set to it, making Aniipods whenever its ingredients are in storage; that Maker is left
+  // out of the coin plan. One Maker per ticked Aniipod (one recipe per bench).
+  const aniipodRecipes = () => {
+    const m = S.facilities["Aniipod Maker"] || { count: 0, level: 0 };
+    return D.recipes.filter((r) => r.fac.some(([f, lv]) => f === "Aniipod Maker" && lv <= (m.level || 0)) && m.count > 0);
+  };
+  const aniipodsOn = () => {
+    const ok = new Set(aniipodRecipes().map((r) => r.id));
+    const makers = (S.facilities["Aniipod Maker"] || {}).count || 0;
+    return (S.aniipods || []).filter((id) => ok.has(id)).slice(0, makers);
+  };
+  function renderAniipods() {
+    S.aniipods = S.aniipods || [];
+    const makers = (S.facilities["Aniipod Maker"] || {}).count || 0;
+    const on = aniipodsOn();
+    const list = aniipodRecipes();
+    $("aniipods").innerHTML = list.length ? list.map((r) => `<label class="check"><input type="checkbox" data-pod="${r.id}" ${on.includes(r.id) ? "checked" : ""}
+        ${!on.includes(r.id) && on.length >= makers ? "disabled" : ""}> ${makesHtml(r.id)}
+        <span class="muted">${T("from {0}", r.in.map(([i, q]) => q + " " + N.item(i)).join(" + "))}</span></label>`).join("")
+      + `<div class="hint">${T("{0} Aniipod Maker(s): tick up to {0}.", makers)}</div>`
+      : `<div class="muted">${T("No Aniipod Maker in your layout.")}</div>`;
+    $("aniipods").querySelectorAll("[data-pod]").forEach((el) => {
+      el.onchange = () => {
+        const id = Number(el.dataset.pod);
+        S.aniipods = aniipodsOn().filter((x) => x !== id);
+        if (el.checked) S.aniipods.push(id);
+        renderAniipods(); recalc();
+      };
     });
     const mw = $("moonrayWheat"); mw.checked = !!S.moonrayWheat; mw.onchange = () => { S.moonrayWheat = mw.checked; recalc(); };
   }
@@ -545,7 +568,14 @@
       workerMaxLevel: Number(S.workerMaxLevel) || 3, fastRv: S.fastRv ? goalLevel() : null });
     const facs = {};
     for (const [n, f] of Object.entries(S.facilities)) if (f.count > 0) facs[n] = f;
+    const pods = aniipodsOn();
+    if (pods.length && facs["Aniipod Maker"]) {
+      const left = facs["Aniipod Maker"].count - pods.length;
+      if (left > 0) facs["Aniipod Maker"] = Object.assign({}, facs["Aniipod Maker"], { count: left });
+      else delete facs["Aniipod Maker"];
+    }
     inp.facilities = facs;
+    inp.keep = {};
     const t0 = performance.now();
     const p = P.plan(D, inp);
     lastInputs = inp;
@@ -575,6 +605,8 @@
 
     lastLines = p.lines;
     renderLines();
+    $("byHand").innerHTML = pods.map((id) => `<div class="hint">${facIco("Aniipod Maker")}${T("{0}: {1}, whenever its ingredients are in storage (not in the coin plan).",
+      "<b>" + N.fac("Aniipod Maker") + "</b>", makesHtml(id))}</div>`).join("");
     // plots under each device: the same whole plots the plan table shows
     const wholePlots = P.wholeCounts(p.lines);
     const zoneName = (d) => d.facility + " (" + d.setting + ")";
@@ -748,7 +780,7 @@
     const wl = $("workerMaxLevel"); wl.value = String(S.workerMaxLevel || 3); wl.onchange = () => { S.workerMaxLevel = Number(wl.value); recalc(); };
     for (const [id, key] of [["personality", "personality"], ["watered", "watered"], ["oneRecipePerBench", "oneRecipePerBench"], ["feed", "feed"], ["eventSeeds", "eventSeeds"], ["bestPrismana", "bestPrismana"]]) bindCheck(id, key);
     capHint();
-    renderFacilities(); renderModules(); renderDedicated(); renderDevices(); renderNotes(); renderUnreleased(); renderKeep(); renderRvGoal(); renderRecipes();
+    renderFacilities(); renderModules(); renderDedicated(); renderDevices(); renderNotes(); renderUnreleased(); renderAniipods(); renderRvGoal(); renderRecipes();
     recalc();
   }
 

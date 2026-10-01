@@ -54,6 +54,7 @@
     "Walking time per crop task (min)": "Tempo de caminhada por tarefa de plantação (min)",
     "Recipe Notes you own": "Notas de Receita que você tem",
     "Not in the game yet": "Ainda não estão no jogo",
+    "Visits are counted anonymously with GoatCounter (no cookies).": "As visitas são contadas de forma anônima pelo GoatCounter (sem cookies).",
     "Ticked Aniimo are never planned, listed or suggested. Untick one when it comes out.":
       "Aniimo marcados nunca são planejados, listados ou sugeridos. Desmarque quando ele sair.",
     "Make for yourself": "Fazer para você",

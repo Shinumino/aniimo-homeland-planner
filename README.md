@@ -11,8 +11,9 @@ Open it in your browser: **https://shinumino.github.io/aniimo-homeland-planner/*
 Or use it offline: download this repository (green **Code** button, then **Download ZIP**), unzip it
 and open `index.html`.
 
-Nothing to install. The planning runs in your browser on your own PC (nothing is sent anywhere), and
-your settings are kept in your browser.
+Nothing to install. The planning runs in your browser on your own PC, and your settings are kept in
+your browser. The website counts visits anonymously with [GoatCounter](https://www.goatcounter.com/)
+(no cookies, no personal data); the offline copy counts nothing.
 
 ## What it does
 
@@ -29,7 +30,8 @@ your settings are kept in your browser.
 ## Notes
 
 - The numbers (recipe times, workloads, prices, facility limits) were read from game build 3603741
-  and checked against the game where we could. A game update can change them.
+  and checked against the game where we could. Rechecked after the update to build 3634150: no homeland
+  numbers changed. A game update can change them.
 - The item, facility and Aniimo icons are the game's own art and belong to its owners.
 - This is a fan-made tool. It is not affiliated with or endorsed by the makers of Aniimo.
 

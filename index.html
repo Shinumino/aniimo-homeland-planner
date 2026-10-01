@@ -235,12 +235,15 @@
     </div>
   </div>
 </main>
+<footer class="hint" style="padding: 0 20px 20px">Visits are counted anonymously with GoatCounter (no cookies).</footer>
 
 <script src="data.js"></script>
 <script src="icons/index.js" onerror="window.ANIIMO_ICONS = {}"></script>
 <script src="lp.js"></script>
 <script src="planner.js"></script>
 <script src="i18n.js"></script>
+<!-- anonymous visit counter: public site only, see counter.js -->
+<script src="counter.js" onerror="void 0"></script>
 <!-- HiGHS solver (highs-js, MIT): the loader and the WebAssembly packed as base64 (a page opened from
      disk cannot fetch a .wasm file). If either is missing, the built-in solver runs. -->
 <script src="vendor/highs.js" onerror="void 0"></script>

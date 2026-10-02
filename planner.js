@@ -217,6 +217,9 @@
       // change it by hand, but want a plan they can set and leave). Off = time-share a bench between
       // recipes, which only works if you switch them yourself.
       oneRecipePerBench: true,
+      // Power (user, 2026-10-01, from RV 12 with the Power Module): the planner may switch machines to
+      // E-mode on Crackle Generators. Off = every machine is worked by an Aniimo, as before.
+      power: true,
       unreleased: [],              // species not in the game yet: never planned, listed or suggested
     };
   }
@@ -252,14 +255,48 @@
   }
 
   // One variable per (recipe, facility): cycle length, per-hour flows, and Aniimo time it costs.
+  // The ability level of the Aniimo the plan puts on a job (the page's "Aniimo go up to level N")
+  function workerLevel(inp, need, ab) {
+    if (inp.abilityLevels && ab && inp.abilityLevels[ab] != null) return Math.max(1, Math.min(4, inp.abilityLevels[ab]));
+    if (inp.workerMaxLevel != null && inp.workerMaxLevel !== "") return Math.max(1, Math.min(4, Number(inp.workerMaxLevel)));
+    if (inp.workerBonus === "max") return 4;
+    return Math.min(4, (need || 1) + (Number(inp.workerBonus) || 0));
+  }
+
+  // Power (decompiled HomelandEnvManager.lua / HomeLandUtils.lua, build 3634150). A Crackle Generator makes
+  // min(1, its worker's workload a minute / unitWorkload) * electricProduce (updateFacilityElectricProduce);
+  // its worker is one Lightning Aniimo, full time. Its level is the Power Module's. Returns what ONE
+  // generator makes with the Aniimo this plan can give it, or null when there is no power to plan.
+  function powerSupply(D, inp, warnings) {
+    const PW = D.power;
+    if (inp.power === false || !PW) return null;
+    const have = inp.facilities[PW.generatorFacility];
+    const top = (PW.generatorByModule || {})[(inp.modules || {})[PW.module] || 0] || 0;
+    if (!have || !(have.count > 0) || !top) return null;
+    let lv = Number(have.level) || top;
+    if (lv > top) {
+      warnings.push(PW.generatorFacility + " level " + lv + " needs " + PW.module + " level " + lv + ": planning with level " + top + ".");
+      lv = top;
+    }
+    const g = PW.generators[lv];
+    if (!g) return null;
+    const fed = inp.feed !== false ? 1 : (D.noFoodRatio != null ? D.noFoodRatio : 0.2);
+    // the generator's operations carry no functionId: the default formula (ATK - DEF, x1.2 on a match)
+    const rate = workPerMinute(g.lv, workerLevel(inp, g.lv, g.ab), null, inp.personality) * fed;
+    const produce = Math.min(1, rate / g.unitWorkload) * g.produce;
+    return produce > 0 ? { lv, count: have.count, produce, worker: g.ab + " " + g.lv + "+" } : null;
+  }
+
+  // 1.2 as a fraction (6/5), so the power row compares whole numbers: in floats 4 x 125 x 1.2 is
+  // 600.0000000000001, which would not fit in 600
+  function rateFraction(rate) {
+    for (let d = 1; d <= 1000; d++) if (Math.abs(rate * d - Math.round(rate * d)) < 1e-9) return [Math.round(rate * d), d];
+    return [rate, 1];
+  }
+
   function buildColumn(D, inp, r, fac, zone) {
     const dedicated = inp.dedicated.includes(fac);
-    const general = (need, ab) => {
-      if (inp.abilityLevels && ab && inp.abilityLevels[ab] != null) return Math.max(1, Math.min(4, inp.abilityLevels[ab]));
-      if (inp.workerMaxLevel != null && inp.workerMaxLevel !== "") return Math.max(1, Math.min(4, Number(inp.workerMaxLevel)));
-      if (inp.workerBonus === "max") return 4;
-      return Math.min(4, (need || 1) + (Number(inp.workerBonus) || 0));
-    };
+    const general = (need, ab) => workerLevel(inp, need, ab);
     // a pen is worked by its family only: no better than that family's best (best case: exactly it)
     const petLv = (need, ab) => {
       if (!r.fam) return general(need, ab);
@@ -328,7 +365,65 @@
     // With HiGHS, plots, benches and devices are whole numbers inside one model: no rounding afterwards,
     // so no crop "shows 0 plots" and no device sits over nothing (both found by the combination sweep,
     // tests/sweep.test.mjs, 2026-09-29). The device passes below are for the hand-written fallback only.
-    if (HIGHS) return planOnce(D, Object.assign({}, userInputs, { _exact: true }));
+    if (HIGHS) {
+      // Power in two passes (measured 2026-10-01): with an E-mode choice on every machine, maxed RV 20 hit the
+      // 4 s cap 4.1% under its best (400,109 vs 417,051). Where E-mode is SLOWER than the Aniimo, it only
+      // frees an Aniimo, which is worth nothing while the plan has Aniimo to spare (its reduced cost is then
+      // <= the Aniimo column's, which is <= 0). In every best plan RV 12-20 all E machines were the faster
+      // kind, with 10-14 Aniimo spare. So: plan with the faster ones; only if that plan has no whole Aniimo
+      // left over, also try every E-mode choice and keep the better plan.
+      userInputs = userInputs || {};               // plan(D) with no inputs (review 4 N3)
+      const exact = Object.assign({}, userInputs, { _exact: true });
+      if (Object.assign(defaults(D), userInputs || {}).power === false) return planOnce(D, exact);
+      // the fastest-upgrade step 1 maximizes upgrades per hour, not coin: compare on what was maximized
+      // (Fable review #1: comparing coin kept a 186 h upgrade when 165.5 h was possible)
+      const speed = userInputs && userInputs._rv && userInputs._rv.min == null;
+      const score = (q) => (speed ? q.rvRate : q.coinPerHour);
+      const better = (a, q) => (q.status === "optimal" && (a.status !== "optimal" || score(q) > score(a)) ? q : a);
+      // a ticked facility (Aniipod Maker) stays on its Aniimo in this pass: it returns only with Aniimo to
+      // spare, and then E-mode would only cost ingredients and power (it runs faster and eats more, 2.4 vs 2 Mega
+      // from 14.4 vs 12 Shell, worth no coin). Left as a free 0/1 choice it cost the solver its 4 s at RV 19-20
+      // (maxed RV 20 + Mega: 390,234 capped vs 417,051).
+      // First a floor: E-mode on Mines and Wells only, where most of the gain is (25 vs 30 min on level-3 ores
+      // and water). A small search, never at the cap RV 12-20 (0.5-3.7 s). Then every bench too; the better plan
+      // is kept. Measured 2026-10-01: the full search alone ran out of time at RV 19-20 (394,828 at RV 20, the
+      // floor gives 403,788; the true best is 417,051), the floor alone gave up 2-3% at RV 16 and 19.
+      const names = ["floor", "full"];
+      const tried = [planOnce(D, Object.assign({}, exact, { _eFasterOnly: true, _eLockedOnly: true, _handE: 0 })),
+                     planOnce(D, Object.assign({}, exact, { _eFasterOnly: true, _handE: 0 }))];
+      // read before any flag is copied onto a pass below (review 4 N1: the copied "capped" made the floor look
+      // unproven and the no-power solve ran anyway, +3-4 s at RV 20)
+      const floorProven = tried[0].status === "optimal" && !tried[0].capped;
+      const fast = tried.reduce(better);
+      if (!(fast.status === "optimal" && fast.aniimo.pool - fast.aniimo.total >= 1 - 1e-6)) {
+        // Aniimo short: every E-mode choice, with any ticked facility held in E-mode (freeing its Aniimo pays
+        // now; held, not free, for the solver's sake) and, when something is ticked, held on its Aniimo too
+        // (Fable review 3 F2: 5 Mines, 2 Aniimo up to level 2, personality on: 4 Mines in E-mode + the Maker on
+        // its Aniimo = 6,124.8, the Maker in E-mode fits only 3 Mines = 5,760)
+        tried.push(planOnce(D, Object.assign({}, exact, { _handE: 1 }))); names.push("ticked in E-mode");
+        // only when some ticked item can use E-mode at all; otherwise it is the same model again (review 4 N2)
+        if (tried[2].handEOffered) { tried.push(planOnce(D, Object.assign({}, exact, { _handE: 0 }))); names.push("ticked on Aniimo"); }
+      }
+      const passes = tried.map((q, k) => ({ name: names[k], status: q.status, capped: !!q.capped, coin: q.coinPerHour }));
+      const best = tried.reduce(better);
+      // not proven if any pass that lost ran out of time (Fable review 2 #2, review 3 F4: both directions)
+      if (tried.some((q) => q !== best && (q.capped || q.status === "time_limit"))) best.capped = true;
+      // Power never shows LESS than no power: a plan without it is a plan with it, so when the search ran out of
+      // time the plan without power is solved too and the better one kept. On EVERY path (review 3 F1: the
+      // early return above skipped it, and maxed RV 20 showed 386,528 with power vs 394,828 without).
+      // A floor solved to the end is already at least the plan without power (that plan is one of its choices),
+      // so the extra solve is needed only when the floor itself ran out of time.
+      best.passes = passes;
+      if (floorProven && best.capped) best.checkedWithoutPower = true;
+      if (best.status === "optimal" && best.capped && !floorProven) {
+        best.checkedWithoutPower = true;
+        const off = planOnce(D, Object.assign({}, exact, { power: false }));
+        passes.push({ name: "no power", status: off.status, capped: !!off.capped, coin: off.coinPerHour });
+        if (off.status === "optimal" && score(off) > score(best))
+          return Object.assign(off, { capped: true, checkedWithoutPower: true, powerNote: "not better within the time limit", passes });
+      }
+      return best;
+    }
     // Devices are decided on the split-bench LP (4 ms a solve); the whole-bench search (one recipe per
     // bench, up to BB_NODE_LIMIT solves) runs once, at the end, with those device decisions.
     const whole = Object.assign(defaults(D), userInputs || {}).oneRecipePerBench !== false;
@@ -415,7 +510,9 @@
     if (ints.length) out.push("General", " " + ints.map((j) => "x" + j).join(" "));
     out.push("End");
     let r;
-    try { r = HIGHS.solve(out.join("\n"), HIGHS_OPTIONS); } catch (e) { return null; }
+    // globalThis.__highsTimeLimit: tests force the time cap with it (review 3 F1)
+    const opts = typeof globalThis !== "undefined" && globalThis.__highsTimeLimit ? Object.assign({}, HIGHS_OPTIONS, { time_limit: globalThis.__highsTimeLimit }) : HIGHS_OPTIONS;
+    try { r = HIGHS.solve(out.join("\n"), opts); } catch (e) { return null; }
     if (r.Status === "Infeasible") return { status: "infeasible" };
     if (r.Status === "Unbounded") return { status: "unbounded" };
     if (r.Status === "Time limit reached" && !(isFinite(r.ObjectiveValue) && r.Columns && Object.keys(r.Columns).length))
@@ -560,6 +657,27 @@
       const zs = r.k === "production" ? (needsEnv(r) && coverOf(fac) > 0 ? zones : [neutral]) : [null];
       for (const z of zs) { const c = buildColumn(D, inp, r, fac, z); if (c) cols.push(c); }
     }
+    // E-mode (user, 2026-10-01): a machine whose level has a power need can run the recipe's E twin. Its only
+    // step is operation 5002, a timer (type 3): no Aniimo, food or personality; `time` seconds at 100% power.
+    // Only full 120% is planned (the user's choice: an overloaded network slows every machine on it), so the
+    // cycle is time / 1.2. Confirmed in game: Mine Lv 4, Copper Ore, 120%, 25 min, "Aniimo are not required".
+    // Only with HiGHS: the hand-written fallback does not branch on the generator count, and rounding it
+    // put 5 Mines on one Lv 1 generator (720 > 600; Fable review #4)
+    const gen = HIGHS ? powerSupply(D, inp, warnings) : null;
+    if (gen) for (const { r, fac } of available(D, inp)) {
+      if (!r.e || r.k !== "processing") continue;
+      const fl = D.facilities[fac] && D.facilities[fac].levels.find((l) => l.lv === inp.facilities[fac].level);
+      if (!fl || !fl.pw) continue;
+      const minutes = r.e.t / 60 / D.power.maxRate;
+      // first pass (planCore): only where E-mode is faster than the Aniimo on the same machine
+      if (inp._eFasterOnly) {
+        const a = cols.find((c) => c.r === r && c.fac === fac && c.kind !== "electric");
+        if (a && !(minutes < a.minutes - 1e-9)) continue;
+      }
+      if (inp._eLockedOnly && !inp.dedicated.includes(fac)) continue;   // the floor pass: Mines and Wells only
+      cols.push({ r, fac, zone: null, kind: "electric", minutes, perHour: 60 / minutes, workerHours: 0, cropJobs: null, op: null, pw: fl.pw,
+        locked: inp.dedicated.includes(fac) });
+    }
     const items = new Map();                       // itemId -> row index
     const itemRow = (i) => { if (!items.has(i)) items.set(i, items.size); return items.get(i); };
     for (const c of cols) for (const [i] of c.r.in.concat(c.r.out)) itemRow(i);
@@ -602,7 +720,10 @@
     const nx = cols.length, ns = sellable.length, nb = buyable.length, ne = foods.length, nz = zoneList.length;
     const zBase = nx + ns + nb + ne;
     // one whole-bench variable per non-crop column (crops are plots, rounded by wholeCounts instead)
-    const whole = inp.oneRecipePerBench !== false ? cols.map((c, j) => (c.kind === "crop" ? -1 : j)).filter((j) => j >= 0) : [];
+    // E-mode machines are whole in both modes: one with an E recipe set draws its power, busy or not
+    // (HomelandEnvManager.checkNeedElectricCost: formula set and not disabled)
+    const oneRecipe = inp.oneRecipePerBench !== false;
+    const whole = cols.map((c, j) => ((oneRecipe ? c.kind !== "crop" : c.kind === "electric") ? j : -1)).filter((j) => j >= 0);
     const yBase = zBase + nz, yOf = new Map(whole.map((j, k) => [j, yBase + k]));
     // Routing (user, 2026-09-28): once an ingredient is in storage "the Aniimo decide" where it goes, the
     // first one to arrive takes it. So an ingredient a set bench uses goes to that one bench recipe, all
@@ -619,7 +740,7 @@
     // Aniipods. Routing them made 1 Aniipod Mega a day cost 4,266 coin/h (a friend's RV 10 setup,
     // 2026-09-28): all Shell had to go to the Maker, none could be sold. So their ingredients stay free.
     const byHand = (j2) => cols[j2].r.out.some(([o]) => keep.some(([k]) => k === o));
-    for (const j2 of whole.filter((j3) => !byHand(j3))) for (const [i2] of cols[j2].r.in) { if (!consumers.has(i2)) consumers.set(i2, []); if (!consumers.get(i2).includes(j2)) consumers.get(i2).push(j2); }
+    for (const j2 of (oneRecipe ? whole : []).filter((j3) => !byHand(j3))) for (const [i2] of cols[j2].r.in) { if (!consumers.has(i2)) consumers.set(i2, []); if (!consumers.get(i2).includes(j2)) consumers.get(i2).push(j2); }
     // Made by hand (page tick boxes: Aniipods, Growth Bud/Flower/Fruit). The facility is set to that recipe
     // and left out of the plan; it takes its ingredients at full speed, and only that. So the plan sets
     // aside exactly that much (Aniipod Mega: 6 Shell per Mega, 2 Megas an hour with a level-3 Aniimo =
@@ -629,6 +750,23 @@
     // was held back, so ticking Mega could not sell a single Shell and the plan moved 5 Mines to Clay.
     const handRecipes = (inp.byHand || []).map(Number).map((id) => D.recipes.find((r) => r.id === id)).filter(Boolean)
       .map((r) => ({ r, c: buildColumn(D, inp, r, r.fac[0][0], null) })).filter((x) => x.c);
+    // A ticked facility in E-mode (user, 2026-10-01: "add the Aniipod Maker into the calculation, if it is worth
+    // E-power or not"). In E-mode it runs its own 120% timer whenever its ingredients are in storage, so it
+    // makes MORE than on its Aniimo and eats that much more (Fable review 2 #1: the first version set aside the
+    // Aniimo's 12 Shell/h while the machine took 14.4; with Aniimo up to level 1, 4 vs 14.4). So with h = 1 the
+    // set-aside is the E rate. Offered only where the timer is at least as fast as the Aniimo, so ticking never
+    // gives fewer of what you asked for (Basic Aniipod: not at level 2+, 15 min vs 25; at level 1 it is 30 vs 25).
+    // The planner then picks: one Aniimo full time, or the facility's power x 1.2 on the generators.
+    const handE = gen ? handRecipes.map(({ r, c }, k) => {
+      const f = r.fac[0][0];
+      // the page takes ticked facilities out of `facilities`, so it passes their level in byHandLevels
+      const lv = (inp.byHandLevels || {})[f] != null ? Number(inp.byHandLevels[f]) : inp.facilities[f] ? inp.facilities[f].level : limits.facilities[f];
+      const fl = D.facilities[f] && D.facilities[f].levels.find((l) => l.lv === lv);
+      if (!r.e || !fl || !fl.pw) return null;       // (r.e first: a ticked recipe without an E twin; review 3 F5)
+      const minutesE = r.e.t / 60 / D.power.maxRate;
+      if (minutesE > c.minutes + 1e-9) return null;
+      return { k, pw: fl.pw, perHourE: 60 / minutesE };
+    }).filter(Boolean) : [];
     const handNeed = new Map();                    // item -> per hour the by-hand facilities take
     for (const { r, c } of handRecipes) for (const [i, q] of r.in) handNeed.set(i, (handNeed.get(i) || 0) + q * c.perHour);
     // "can make": some recipe in the layout outputs it (Clay is in `items` through Pottery's input even with
@@ -638,6 +776,16 @@
     const ownU = usedCols.filter((j2) => inp.facilities[cols[j2].fac].count > 1);
     const uBase = yBase + whole.length, uOwn = new Map(ownU.map((j2, k) => [j2, uBase + k]));
     const uOf = new Map(usedCols.map((j2) => [j2, uOwn.has(j2) ? uOwn.get(j2) : yOf.get(j2)]));
+    // A recipe in E-mode and the same recipe on an Aniimo are ONE recipe for routing (its ingredient goes to
+    // that recipe, on whichever machine): the E column uses its Aniimo twin's switch, y_E <= count * u_A.
+    // As two consumers, "2 dryers on Dried Strawberries, one in E-mode" was infeasible (Fable review #2).
+    const sharedU = [];
+    for (const jE of ownU) {
+      if (cols[jE].kind !== "electric") continue;
+      const jA = ownU.find((j3) => cols[j3].kind !== "electric" && cols[j3].r === cols[jE].r && cols[j3].fac === cols[jE].fac);
+      if (jA == null) continue;
+      uOf.set(jE, uOwn.get(jA)); sharedU.push([jE, uOwn.get(jA)]); uOwn.delete(jE);
+    }
     // fastest upgrade: t = upgrades per hour (see plan)
     const rv = inp._rv || null;
     // Never fed to a plan bench: kept items, the RV materials while planning the upgrade, and what a by-hand
@@ -660,7 +808,9 @@
     const sItems = routed.map(([i2]) => i2);
     const sBase = fBase + fCols.length, sOf = new Map(sItems.map((i2, k) => [i2, sBase + k]));
     const tIdx = rv ? sBase + sItems.length : -1;
-    const n = sBase + sItems.length + (rv ? 1 : 0);
+    const gIdx = gen ? sBase + sItems.length + (rv ? 1 : 0) : -1;   // generators placed and worked
+    const hBase = sBase + sItems.length + (rv ? 1 : 0) + (gen ? 1 : 0);   // h: ticked facility in E-mode (0/1)
+    const n = hBase + handE.length;
     const rows = [], b = [];
     for (const f of facNames) {                    // facility counts (whole benches when one recipe each)
       const row = new Array(n).fill(0);
@@ -674,7 +824,8 @@
       // A locked facility (Mine, Well, pens) keeps its Aniimo and works non-stop: set to a recipe, it runs
       // flat out (x = y). Before, a Mine could be set to Shell and run 1.5% of the time for a few Shells,
       // which the table showed as "Mine 0" (a friend's RV 10 setup, 2026-09-28).
-      if (cols[j].kind === "dedicated") {
+      // E-mode on a locked facility too (Fable review #3: "Mine E-mode busy 75%" is not something you can set)
+      if (cols[j].kind === "dedicated" || cols[j].locked) {
         const full = new Array(n).fill(0);
         full[j] = -1; full[y] = 1;
         rows.push(full); b.push(0);
@@ -720,6 +871,10 @@
     const itemBase = rows.length;
     const keepOf = new Map(keep);
     for (const [i, k] of items) { rows.push(new Array(n).fill(0)); b.push(-(keepOf.get(i) || 0) - (handNeed.get(i) || 0)); }  // made >= used + sold + kept + by hand
+    handE.forEach((h, i) => {                      // in E-mode the set-aside is the E rate: + q (E - Aniimo) on h
+      const { r, c } = handRecipes[h.k];
+      for (const [it, q] of r.in) if (items.has(it)) rows[itemBase + items.get(it)][hBase + i] += q * (h.perHourE - c.perHour);
+    });
     for (const i of handNeed.keys()) {             // facilities (plots, Mines) making it >= 1
       const row = new Array(n).fill(0);
       cols.forEach((c, j) => { if (c.r.out.some(([o]) => o === i)) row[j] = -1; });
@@ -743,8 +898,29 @@
     // each by-hand facility keeps one Aniimo working it (the Maker runs flat out on a Lightning Aniimo):
     // those come out of the budget (Fable review #1)
     const handAniimo = handRecipes.reduce((a, { c }) => a + c.workerHours, 0);
+    if (gen) workerRow[gIdx] = 1;                  // each generator keeps one Lightning Aniimo on it
+    handE.forEach((h, i) => { workerRow[hBase + i] = -handRecipes[h.k].c.workerHours; });   // E-mode frees its seat
+    if (inp._handE != null) handE.forEach((h, i) => {   // held at exactly 0 or 1 (planCore's passes)
+      const lo = new Array(n).fill(0); lo[hBase + i] = -1; rows.push(lo); b.push(-inp._handE);
+      const hi = new Array(n).fill(0); hi[hBase + i] = 1; rows.push(hi); b.push(inp._handE);
+    });
     rows.push(workerRow); b.push(Math.max(0, pool) - handAniimo);
+    if (gen) {
+      // full 120%: power drawn x 1.2 <= power made, all generators on one pole network (their outputs add up,
+      // HomelandEnvManager link groups); as whole numbers via 1.2 = 6/5
+      const [num, den] = rateFraction(D.power.maxRate);
+      const row = new Array(n).fill(0);
+      cols.forEach((c, j) => { if (c.kind === "electric") row[yOf.get(j)] = c.pw * num; });
+      handE.forEach((h, i) => { row[hBase + i] = h.pw * num; });
+      row[gIdx] = -gen.produce * den;
+      rows.push(row); b.push(0);
+      const most = new Array(n).fill(0); most[gIdx] = 1; rows.push(most); b.push(gen.count);
 
+    }
+
+    for (const [j2, u] of sharedU) {               // E twin: y_E <= count * u (its Aniimo twin's switch)
+      const row = new Array(n).fill(0); row[yOf.get(j2)] = 1; row[u] = -inp.facilities[cols[j2].fac].count; rows.push(row); b.push(0);
+    }
     for (const [j2, u] of uOwn) {                  // y <= count * u
       const row = new Array(n).fill(0); row[yOf.get(j2)] = 1; row[u] = -inp.facilities[cols[j2].fac].count; rows.push(row); b.push(0);
     }
@@ -775,7 +951,7 @@
       if (exact && !kept) {                        // surplus of a routed item only when flagged: surplus <= M (1 - routed) + M s
         const M = most(i2);
         const row = rows[itemBase + items.get(i2)].map((v) => -v);
-        for (const j2 of js) row[uOf.get(j2)] += M;
+        for (const u of new Set(js.map((j2) => uOf.get(j2)))) row[u] += M;   // a shared switch once (review #2)
         row[sOf.get(i2)] -= M;
         rows.push(row); b.push(M);
       }
@@ -829,8 +1005,15 @@
     const devInts = inp._deviceFix || inp._exact ? zoneList.map((z, k) => zBase + k) : [];
     const cropInts = inp._exact ? cols.map((c, j) => (c.kind === "crop" ? j : -1)).filter((j) => j >= 0) : [];
     if (inp._exact) zoneList.forEach((z, k) => { obj[zBase + k] -= DEVICE_EPS; });
-    const ints = [...yOf.values(), ...uOwn.values(), ...fOf.values(), ...sOf.values(), ...devInts, ...cropInts];
-    let res = HIGHS ? solveHighs(obj, rows, b, ints, [...uOwn.values(), ...fOf.values(), ...sOf.values()]) : null;
+    if (gen) obj[gIdx] -= DEVICE_EPS;              // an idle generator is never placed
+    // a ticked facility goes to E-mode when the power is spare: it frees an Aniimo (e.g. your one Lightning 3)
+    // (no tie-breaker on h: planCore holds it at 0 or 1 in every pass, so a tie is decided by the passes:
+    // the Maker keeps its Aniimo unless Aniimo are short; review 3 F6)
+    // nor a machine set to E-mode with nothing to do: it would draw power and show in no line (RV 20, power test)
+    cols.forEach((c, j) => { if (c.kind === "electric") obj[yOf.get(j)] -= DEVICE_EPS; });
+    const hVars = handE.map((h, i) => hBase + i);
+    const ints = [...yOf.values(), ...uOwn.values(), ...fOf.values(), ...sOf.values(), ...devInts, ...cropInts, ...(gen ? [gIdx] : []), ...hVars];
+    let res = HIGHS ? solveHighs(obj, rows, b, ints, [...uOwn.values(), ...fOf.values(), ...sOf.values(), ...hVars]) : null;
     // HiGHS at its time cap with nothing found: say so. Falling back to the hand-written solver ran a
     // different model and once took 49 s (Fable review 2 #2). Only a missing/broken HiGHS falls back.
     if (res && res.status === "time_limit") {
@@ -862,7 +1045,7 @@
         lineValue: (valueOut - valueIn) * c.perHour * x,       // same convention as the site's lines
         aniimo: c.workerHours * x,
         cropJobs: c.cropJobs ? Object.fromEntries(Object.entries(c.cropJobs).map(([k, v]) => [k, v * x])) : null,
-        worker: c.op ? jobName(D, c.op.ab, c.op.lv, c.r.fam) : c.r.ops.filter((o) => o.wl).map((o) => o.ab + " " + o.lv + "+").join(", ") + (inp.watered && c.r.wc ? ", Water 1+ (watering)" : ""),
+        worker: c.kind === "electric" ? "E-mode" : c.op ? jobName(D, c.op.ab, c.op.lv, c.r.fam) : c.r.ops.filter((o) => o.wl).map((o) => o.ab + " " + o.lv + "+").join(", ") + (inp.watered && c.r.wc ? ", Water 1+ (watering)" : ""),
         note: c.r.note || null,
       });
     });
@@ -882,7 +1065,10 @@
       return { facility: z.fac, setting: z.setting, count: placed, place: Math.ceil(placed - 1e-6), worker: z.worker, max: z.max, under, crops };
     }).filter((d) => d.count > 1e-6);
     const zoneSeats = devices.reduce((acc, d) => acc + d.count, 0);
-    const used = { dedicated: 0, bench: 0, crop: 0, devices: zoneSeats, byHand: handAniimo };
+    const G = gen ? Math.round(res.x[gIdx]) : 0;
+    const handOn = new Map(handE.filter((h, i) => Math.round(res.x[hBase + i]) === 1).map((h) => [h.k, h]));   // ticked, in E-mode
+    const handSeats = handRecipes.reduce((a, { c }, k) => a + (handOn.has(k) ? 0 : c.workerHours), 0);
+    const used = { dedicated: 0, bench: 0, crop: 0, electric: 0, devices: zoneSeats, byHand: handSeats, generators: G };
     for (const l of lines) used[l.kind] += l.aniimo;
     const abilityNeeds = {};                       // job -> Aniimo-hours per hour (1 = one Aniimo full time)
     const fullTime = {};                           // part of that which is one indivisible full-time seat
@@ -891,6 +1077,7 @@
         for (const [k, v] of Object.entries(l.cropJobs || {})) abilityNeeds[k] = (abilityNeeds[k] || 0) + v;
         continue;
       }
+      if (l.kind === "electric") continue;         // no Aniimo on an E-mode machine
       abilityNeeds[l.worker] = (abilityNeeds[l.worker] || 0) + l.aniimo;
       if (l.kind === "dedicated") fullTime[l.worker] = (fullTime[l.worker] || 0) + l.aniimo;
     }
@@ -898,7 +1085,12 @@
       abilityNeeds[d.worker] = (abilityNeeds[d.worker] || 0) + d.place;
       fullTime[d.worker] = (fullTime[d.worker] || 0) + d.place;
     }
-    for (const { r, c } of handRecipes) {          // a by-hand facility is a full-time seat for its worker
+    if (G) {                                       // a generator is a full-time seat for its Lightning Aniimo
+      abilityNeeds[gen.worker] = (abilityNeeds[gen.worker] || 0) + G;
+      fullTime[gen.worker] = (fullTime[gen.worker] || 0) + G;
+    }
+    for (const [k, { r, c }] of handRecipes.entries()) {   // a by-hand facility is a full-time seat for its worker
+      if (handOn.has(k)) continue;                 // ... unless it runs in E-mode
       const op = mainOp(r);
       if (!op) continue;
       const job = jobName(D, op.ab, op.lv, r.fam);
@@ -913,15 +1105,31 @@
       capped: !!res.capped,                        // the solver stopped at its time cap: best found, not proven best
       rvRate: rv ? res.x[tIdx] : null,
       // by-hand items at full speed, per hour (what the page shows under the plan)
-      byHand: handRecipes.map(({ r, c }) => ({ recipeId: r.id, facility: r.fac[0][0], perHour: c.perHour * r.out[0][1], needs: r.in.map(([i, q]) => [i, q * c.perHour]) })),
+      byHand: handRecipes.map(({ r, c }, k) => {
+        const rate = handOn.has(k) ? handOn.get(k).perHourE : c.perHour;   // the E timer sets the pace in E-mode
+        return { recipeId: r.id, facility: r.fac[0][0], perHour: rate * r.out[0][1], needs: r.in.map(([i, q]) => [i, q * rate]),
+          mode: handOn.has(k) ? "E-mode" : "Aniimo" };
+      }),
       coinPerHour: coin, coinPerDay: coin * 24,
       lines, sold, bought, eaten, devices, fullTime,
+      power: gen ? {
+        generators: G, level: gen.lv, worker: gen.worker, perGenerator: gen.produce, produce: G * gen.produce,
+        // what the machines in the plan draw. The solver may leave a machine "set" with nothing to run (its
+        // tie-breaker cost is under the MIP gap, 1e-4 of the plan); it is in no line, you would not set it, and
+        // its power is not counted here, so the real draw is at most what the power row allowed. An x >= y/1000
+        // row per E column forced it out but made RV 15 hit the 4 s cap (measured 2026-10-01). Cost: within the
+        // gap, i.e. at most ~1e-4 of coin/h (Fable review #5: maxed RV 18 cap 14, one idle Crafting Table).
+        draw: cols.reduce((a, c, j) => a + (c.kind === "electric" && res.x[j] >= 1e-6 ? Math.round(res.x[yOf.get(j)]) * c.pw : 0), 0)
+          + [...handOn.values()].reduce((a, h) => a + h.pw, 0),
+        maxRate: D.power.maxRate,
+      } : null,
       kept: keep.map(([i, h]) => ({ item: name(i), id: i, perDay: h * 24 })),
+      handEOffered: handE.length,                  // ticked items that could run in E-mode (planCore's passes)
       food: { eaters, needPerHour: foodNeed,
               // how long the eaten mix lasts per item fed (for "how often do I refill")
               hoursPerItem: eaten.length ? eaten.reduce((acc, e) => acc + e.food, 0) / eaten.reduce((acc, e) => acc + e.perHour, 0) / (foodNeed || 1) : 0 },
       aniimo: { cap: inp.cap, reserved: inp.reserved, haulers: inp.haulers, pool, used,
-                total: used.dedicated + used.bench + used.crop + used.devices + used.byHand },
+                total: used.dedicated + used.bench + used.crop + used.devices + used.byHand + used.generators },
       abilityNeeds,
     };
   }
@@ -938,6 +1146,14 @@
     for (const [n, levels] of Object.entries(D.modules)) {
       const ok = levels.filter((l) => l.rv != null && l.rv <= rv);
       mod[n] = ok.length ? Math.max(...ok.map((l) => l.lv)) : 0;
+    }
+    // The generator's levels have no RV of their own (empty rv_level), so every level counted as open from
+    // RV 1 and the page offered a level-5 Crackle Generator at RV 1 (found 2026-10-01). Its level is the
+    // Power Module's: "Unlocks Furniture: Crackle Generator (Level N)"; no module, no generator.
+    if (D.power) {
+      const g = D.power.generatorFacility, gl = (D.power.generatorByModule || {})[mod[D.power.module] || 0];
+      if (gl) fac[g] = gl;
+      else { delete fac[g]; if (g in count) count[g] = 0; }
     }
     return { facilities: fac, counts: count, modules: mod, cap: D.rvCaps[rv] || 0 };
   }
@@ -1193,7 +1409,9 @@
   function wholeCounts(lines) {
     const out = new Map();
     const byFac = {};
-    for (const l of lines) if (l.kind !== "bench") (byFac[l.facility] = byFac[l.facility] || []).push(l);
+    // benches and E-mode machines show their whole machines (l.benches); only plots and locked facilities
+    // worked by Aniimo are rounded here. An E-mode line in the rounding took a Pickling Jar's "1" (sweep, 2026-10-01)
+    for (const l of lines) if (l.kind !== "bench" && l.kind !== "electric") (byFac[l.facility] = byFac[l.facility] || []).push(l);
     for (const ls of Object.values(byFac)) {
       const byZone = new Map();
       for (const l of ls) { const k = l.zone || ""; if (!byZone.has(k)) byZone.set(k, []); byZone.get(k).push(l); }

@@ -147,6 +147,7 @@
     <section class="panel">
       <h2>Options</h2>
       <label class="check"><input type="checkbox" id="oneRecipePerBench"> One recipe per bench (set it and leave it). Untick if you switch bench recipes by hand</label>
+      <label class="check"><input type="checkbox" id="power"> Use power: machines in E-mode on Crackle Generators (Power Module, RV 12)</label>
       <label class="check"><input type="checkbox" id="watered"> Crops are watered (−5 min per growth stage; needs a free Water Aniimo)</label>
       <label class="check"><input type="checkbox" id="feed"> Plan food for the Aniimo (unfed Aniimo work at 20% speed)</label>
       <label class="check"><input type="checkbox" id="eventSeeds"> Event seeds can be bought</label>
@@ -215,6 +216,7 @@
     </section>
     <div class="grid2">
       <section class="panel"><h2>Environment devices to place</h2><table><tbody id="devicesOut"></tbody></table></section>
+      <section class="panel"><h2>Power</h2><table><tbody id="powerOut"></tbody></table></section>
       <section class="panel"><h2>Sell per hour</h2><table><tbody id="sold"></tbody></table></section>
       <section class="panel" style="grid-column: 1 / -1"><h2>Aniimo you need</h2><table class="sortable"><thead><tr><th data-type="text">Job</th><th class="num" data-type="num">Full time</th>
         <th data-type="num">Aniimo that can do it</th></tr></thead><tbody id="abilities"></tbody></table>
@@ -277,11 +279,14 @@
     const r = recipeOf(id);
     return r ? `<span class="makes">${r.out.map(([i, n]) => itemIco(i) + N.item(i) + " x" + n).join(" + ")}${variantHtml(r)}</span>` : "";
   };
-  const FAC_NAMES = Object.keys(D.facilities).filter((n) => D.recipes.some((r) => r.fac.some(([f]) => f === n))).sort();
+  // facilities that run recipes, plus the Crackle Generator (its recipe is power, not an item: it was missing
+  // from this list, so a generator could not be entered; found 2026-10-01)
+  const FAC_NAMES = Object.keys(D.facilities).filter((n) => D.recipes.some((r) => r.fac.some(([f]) => f === n))
+    || (D.power && n === D.power.generatorFacility)).sort();
 
   // Default setup = the layout in the user's original optimizer link (RV 11).
   const DEFAULT = {
-    rv: 11, cap: 32, reserved: 2, haulers: 2, homeAniimo: "", minFoodPerItem: 0, workerMaxLevel: 3, personality: false,
+    rv: 11, cap: 32, reserved: 2, haulers: 2, homeAniimo: "", minFoodPerItem: 0, workerMaxLevel: 3, personality: false, power: true,
     watered: true, feed: true, eventSeeds: true, oneRecipePerBench: true, unreleased: ["Jabster"], rvGoal: { level: "" }, cropOpOverhead: 0.5, notes: [], keep: {}, aniipods: [], moonrayWheat: false,
     // Signal Transmitter Lv 2 (RV 11 max): its 2 RV Park places make the default cap of 32 add up
     modules: { "Ecological Module": 3, "Kitchen Module": 4, "Resource Detector": 2, "Crafting Module": 3, "Signal Transmitter": 2 },
@@ -585,6 +590,8 @@
     const facs = {};
     for (const [n, f] of Object.entries(S.facilities)) if (f.count > 0) facs[n] = f;
     const pods = byHandOn();
+    // their level, for E-mode (the facility leaves `facilities` below when all of them are ticked)
+    inp.byHandLevels = Object.fromEntries(BY_HAND_FACILITIES.filter((f) => S.facilities[f]).map((f) => [f, S.facilities[f].level]));
     for (const f of BY_HAND_FACILITIES) {          // the facilities set by hand leave the coin plan
       const n = pods.filter((id) => byHandFac(recipeOf(id)) === f).length;
       if (!n || !facs[f]) continue;
@@ -604,7 +611,7 @@
     if (p.status !== "optimal") {
       $("headline").textContent = T("No plan");
       $("subline").textContent = T(p.status);
-      for (const id of ["lines", "sold", "eaten", "bought", "abilities", "devicesOut"]) $(id).innerHTML = "";
+      for (const id of ["lines", "sold", "eaten", "bought", "abilities", "devicesOut", "powerOut"]) $(id).innerHTML = "";
       $("budget").innerHTML = "";
       renderRvInfo(p);
       return;
@@ -617,10 +624,10 @@
     const seg = (v, c) => `<span style="width:${Math.min(100, v / pool * 100)}%;background:${c}"></span>`;
     $("budget").innerHTML = `<div class="row"><span>${T("{0} of {1} production Aniimo busy", fmt(p.aniimo.total, 1), fmt(p.aniimo.pool))}</span>
       <span class="muted">${T("cap {0} − kept out {1} − haulers {2}", p.aniimo.cap, p.aniimo.reserved, p.aniimo.haulers)}</span></div>
-      <div class="bar">${seg(u.dedicated, "var(--bar1)")}${seg(u.devices, "var(--bar4)")}${seg(u.bench, "var(--bar2)")}${seg(u.crop, "var(--bar3)")}</div>
+      <div class="bar">${seg(u.dedicated, "var(--bar1)")}${seg(u.devices + (u.generators || 0), "var(--bar4)")}${seg(u.bench + (u.byHand || 0), "var(--bar2)")}${seg(u.crop, "var(--bar3)")}</div>
       <div class="legend"><span><i style="background:var(--bar1)"></i>${T("locked facilities {0}", fmt(u.dedicated, 1))}</span>
-        <span><i style="background:var(--bar4)"></i>${T("environment devices {0}", fmt(u.devices, 1))}</span>
-        <span><i style="background:var(--bar2)"></i>${T("benches {0}", fmt(u.bench, 1))}</span>
+        <span><i style="background:var(--bar4)"></i>${T("environment devices {0}", fmt(u.devices, 1))}${u.generators ? " · " + T("generators {0}", u.generators) : ""}</span>
+        <span><i style="background:var(--bar2)"></i>${T("benches {0}", fmt(u.bench, 1))}${u.byHand ? " · " + T("by hand {0}", fmt(u.byHand, 1)) : ""}</span>
         <span><i style="background:var(--bar3)"></i>${T("crop tasks {0}", fmt(u.crop, 1))}</span></div>`;
 
     lastLines = p.lines;
@@ -635,7 +642,7 @@
     // by-hand items: their facility at full speed (the plan sets that much of the ingredient aside)
     $("byHand").innerHTML = (p.byHand || []).map((x) => `<div class="hint">${facIco(x.facility)}${T("{0}: {1}, whenever its ingredients are in storage (not in the coin plan).",
       "<b>" + N.fac(x.facility) + "</b>", makesHtml(x.recipeId))} ${T("Up to {0} an hour; the plan sets aside {1}.", fmt(x.perHour, 1),
-      x.needs.map(([i, q]) => T("{0}/h of {1}", fmt(q, 1), N.item(i))).join(", "))}</div>`).join("");
+      x.needs.map(([i, q]) => T("{0}/h of {1}", fmt(q, 1), N.item(i))).join(", "))}${x.mode === "E-mode" ? " " + T("In E-mode on the generators: no Aniimo needed.") : ""}</div>`).join("");
     // Where each device goes, said plainly (user, 2026-09-28: "hot furnace on cherry blossom, no need to
     // justify"): how many, the setting, and the whole plots of each crop under it (the plan table's counts)
     const wholePlots = P.wholeCounts(p.lines);
@@ -651,6 +658,21 @@
     $("devicesOut").innerHTML = p.devices.map((d) => `<tr><td>${facIco(d.facility, true)}<b>${T("{0} {1}, set to {2}", d.place, N.fac(d.facility), T(d.setting))}</b>
         <div>${T("Place it over: {0}", over(d))}</div></td><td class="muted">${N.job(d.worker)}</td></tr>`).join("")
       || `<tr><td class="muted">${S.devices === false ? T("turned off") : T("none worth placing")}</td></tr>`;
+    // Power (2026-10-01): how many generators and who works them, what goes on them, and how much is used.
+    // Only full 120% is planned, so it also says never to add more (that slows every machine).
+    const pw = p.power, eL = p.lines.filter((l) => l.kind === "electric");
+    const machines = new Map();                    // "facility|item" -> machines
+    for (const l of eL) { const k = l.facility + "|" + recipeOf(l.recipeId).out[0][0]; machines.set(k, (machines.get(k) || 0) + l.benches); }
+    for (const h of p.byHand || []) if (h.mode === "E-mode") { const k = h.facility + "|" + recipeOf(h.recipeId).out[0][0]; machines.set(k, (machines.get(k) || 0) + 1); }
+    $("powerOut").innerHTML = !pw ? `<tr><td class="muted">${S.power === false ? T("turned off")
+        : p.powerNote ? T("Power did not give a better plan within {0} s: this is the plan without it.", P.solverTimeLimit())
+        : T("no generator yet (Power Module, RV 12)")}</td></tr>`
+      : !pw.generators ? `<tr><td class="muted">${T("none worth placing")}</td></tr>`
+      : `<tr><td>${facIco(D.power.generatorFacility, true)}<b>${T("{0} {1} level {2}", pw.generators, N.fac(D.power.generatorFacility), pw.level)}</b>
+          <div>${T("Connect: {0}", [...machines].map(([k, n]) => { const [f, i] = k.split("|"); return T("{0} {1} on {2}", n, N.fac(f), N.item(i)); }).join(", "))}</div>
+          <div class="hint">${T("Power used {0} of {1}: every machine at 120%. Do not add more machines: drawing more than {2} slows all of them.",
+            fmt(pw.draw), fmt(pw.produce), fmt(pw.produce / pw.maxRate))}${pw.generators > 1 ? " " + T("Link the generators into one network with power poles.") : ""}</div></td>
+        <td class="muted">${N.job(pw.worker)}</td></tr>`;
     lastPlan = p;
     renderRvInfo(p);
     renderRest(p);
@@ -699,10 +721,10 @@
         if (l.benches != null && l.count < l.benches - 0.005) many = `<b>${l.benches}</b> <span class="muted">${l.benches === 1 ? T("bench") : T("benches")}</span> · <span title="${T("exact: {0}", fmt(l.count, 2))}">${T("busy {0}", "<b>" + fmt(l.count / l.benches * 100) + "%</b>")}</span>`;
       }
       const perHour = r ? r.out.map(([i, n]) => `${itemIco(i)}${fmt(n * cycles, n * cycles < 10 ? 1 : 0)}`).join(" ") : "";
-      return `<tr><td>${facIco(l.facility, true)}${N.fac(l.facility)}${l.zone ? ' <span class="pill">' + N.zone(l.zone) + "</span>" : ""}</td>
+      return `<tr><td>${facIco(l.facility, true)}${N.fac(l.facility)}${l.zone ? ' <span class="pill">' + N.zone(l.zone) + "</span>" : ""}${l.kind === "electric" ? ' <span class="pill">' + T("E-mode") + "</span>" : ""}</td>
       <td class="num" style="white-space:nowrap">${many}</td><td>${makesHtml(l.recipeId)}${l.note ? ` <span class="pill">${T("note")}</span>` : ""}</td>
       <td class="num" style="white-space:nowrap">${perHour}</td>
-      <td class="num">${T("{0} min", fmt(l.minutesPerCycle, 1))}</td><td class="num">${coinCell(l)}</td><td class="muted">${N.job(l.worker)}</td></tr>`;
+      <td class="num">${T("{0} min", fmt(l.minutesPerCycle, 1))}</td><td class="num">${coinCell(l)}</td><td class="muted">${l.kind === "electric" ? T("no Aniimo") : N.job(l.worker)}</td></tr>`;
     }).join("");
   }
   document.addEventListener("click", (e) => {
@@ -819,7 +841,7 @@
     $("rv").value = S.rv;
     for (const [id, key] of [["cap", "cap"], ["reserved", "reserved"], ["haulers", "haulers"], ["homeAniimo", "homeAniimo"], ["minFoodPerItem", "minFoodPerItem"], ["cropOpOverhead", "cropOpOverhead"]]) bindNumber(id, key);
     const wl = $("workerMaxLevel"); wl.value = String(S.workerMaxLevel || 3); wl.onchange = () => { S.workerMaxLevel = Number(wl.value); recalc(); };
-    for (const [id, key] of [["personality", "personality"], ["watered", "watered"], ["oneRecipePerBench", "oneRecipePerBench"], ["feed", "feed"], ["eventSeeds", "eventSeeds"], ["bestPrismana", "bestPrismana"]]) bindCheck(id, key);
+    for (const [id, key] of [["personality", "personality"], ["watered", "watered"], ["oneRecipePerBench", "oneRecipePerBench"], ["feed", "feed"], ["eventSeeds", "eventSeeds"], ["bestPrismana", "bestPrismana"], ["power", "power"]]) bindCheck(id, key);
     capHint();
     renderFacilities(); renderModules(); renderDedicated(); renderDevices(); renderNotes(); renderUnreleased(); renderAniipods(); renderRvGoal(); renderRecipes();
     recalc();

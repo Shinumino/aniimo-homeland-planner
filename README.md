@@ -21,6 +21,8 @@ your browser. The website counts visits anonymously with [GoatCounter](https://w
 - Sends each ingredient to a single recipe, since the Aniimo decide where items go once they are in
   storage.
 - Places the Heat Furnace, Cooling Unit and Sunlamp where crops need them.
+- From RV 12 (Power Module): decides which machines to run in E-mode on Crackle Generators, at full 120%,
+  and says how many generators and what to connect. Untick "Use power" to plan without it.
 - Plans food for your Aniimo and anything you want to keep for yourself (Aniipods).
 - Lists the Aniimo that can do each job, a suggested roster, and a best case with the best Aniimo in
   the game.

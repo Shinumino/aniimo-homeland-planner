@@ -73,6 +73,14 @@
   img.ico { width: 24px; height: 24px; vertical-align: middle; margin-right: 6px; object-fit: contain; }
   img.ico.big { width: 32px; height: 32px; }
   img.ico.g { background: #3b4048; border-radius: 6px; padding: 2px; }
+  /* Simple mode (user, 2026-10-02: "too complex for most people"): the RV level is the only input and only
+     what it takes to set up the homeland and place the Aniimo is shown. .adv = Advanced mode only. */
+  body.simple .adv, body:not(.simple) .simple-only { display: none !important; }
+  body.simple main { grid-template-columns: 1fr; max-width: 1100px; margin: 0 auto; }
+  body.simple #planTable th:nth-child(n+4), body.simple #lines td:nth-child(n+4) { display: none; }
+  body.simple #best .hint { display: none; }
+  body.simple .nothing { display: none; }   /* a devices / power panel with nothing to place */
+  .modebtn { margin-top: 4px; }
   .makes { display: inline-flex; align-items: center; gap: 2px; flex-wrap: wrap; }
 </style>
 </head>
@@ -80,13 +88,15 @@
 <header>
   <div>
     <h1>Aniimo Homeland Planner</h1>
-    <div class="sub" id="buildInfo"></div>
+    <div class="sub adv" id="buildInfo"></div>
   </div>
   <div style="text-align:right">
     <label class="sub" style="display:inline-flex;gap:6px;align-items:center;margin-bottom:2px"><span>Language</span>
       <select id="lang" style="width:auto"><option value="en">English</option><option value="pt">Português</option></select></label>
-    <div class="headline" id="headline">…</div>
-    <div class="sub" id="subline"></div>
+    <div class="headline adv" id="headline">…</div>
+    <div class="sub adv" id="subline"></div>
+    <button id="advancedBtn" class="modebtn simple-only" type="button">Advanced mode</button>
+    <button id="simpleBtn" class="modebtn adv" type="button">Simple mode</button>
   </div>
 </header>
 
@@ -96,13 +106,13 @@
       <h2>Your RV</h2>
       <label class="row">RV level
         <select id="rv"></select></label>
-      <div class="hint">Changing the RV sets every limit below to what that RV allows. Everything stays editable.</div>
-      <div class="row">
+      <div class="hint adv">Changing the RV sets every limit below to what that RV allows. Everything stays editable.</div>
+      <div class="row adv">
         <button id="applyMax">Fill everything to this RV's max (counts too)</button>
       </div>
     </section>
 
-    <section class="panel">
+    <section class="panel adv">
       <h2>Aniimo</h2>
       <label class="row">Aniimo cap in your home <input type="number" id="cap" min="0"></label>
       <div class="hint" id="capHint"></div>
@@ -123,19 +133,19 @@
       </details>
     </section>
 
-    <section class="panel">
+    <section class="panel adv">
       <h2>Facilities</h2>
       <div class="hint">How many of each you have and their level. "/N" is the most your RV allows.</div>
       <div class="tablewrap"><table class="fac-table"><thead><tr><th>Facility</th><th class="num">Count</th><th class="num">Level</th></tr></thead>
         <tbody id="facilities"></tbody></table></div>
     </section>
 
-    <section class="panel">
+    <section class="panel adv">
       <h2>RV modules</h2>
       <div id="modules"></div>
     </section>
 
-    <section class="panel">
+    <section class="panel adv">
       <h2>Environment devices</h2>
       <label class="check"><input type="checkbox" id="devices"> Let the planner place Heat Furnaces, Cooling Units and Sunlamps</label>
       <div class="hint">It picks how many (up to your RV's limit), the setting, and which crops go under them.
@@ -143,7 +153,7 @@
       <table class="cover"><thead><tr><th></th><th>Farmland</th><th>Woodland</th></tr></thead><tbody id="coverTable"></tbody></table>
     </section>
 
-    <section class="panel">
+    <section class="panel adv">
       <h2>Options</h2>
       <label class="check"><input type="checkbox" id="oneRecipePerBench"> One recipe per bench (set it and leave it). Untick if you switch bench recipes by hand</label>
       <label class="check"><input type="checkbox" id="power"> Use power: machines in E-mode on Crackle Generators (Power Module, RV 12)</label>
@@ -153,18 +163,18 @@
       <label class="row">Walking time per crop task (min) <input type="number" id="cropOpOverhead" step="0.1" min="0"></label>
     </section>
 
-    <section class="panel">
+    <section class="panel adv">
       <h2>Recipe Notes you own</h2>
       <div id="notes"></div>
     </section>
 
-    <section class="panel">
+    <section class="panel adv">
       <h2>Not in the game yet</h2>
       <div class="hint">Ticked Aniimo are never planned, listed or suggested. Untick one when it comes out.</div>
       <details><summary id="unreleasedSummary"></summary><div id="unreleased"></div></details>
     </section>
 
-    <section class="panel">
+    <section class="panel adv">
       <h2>Make for yourself</h2>
       <div class="hint">Tick what you make for yourself. That facility is set to it and makes it whenever the ingredients are in storage; the plan uses everything else for coin.</div>
       <div id="aniipods"></div>
@@ -172,14 +182,14 @@
         (Moondew Radish, Waxing Moon Pepper)</label>
     </section>
 
-    <section class="panel">
+    <section class="panel adv">
       <h2>Next RV level</h2>
       <label class="row">Upgrade to RV <select id="rvGoalLevel"></select></label>
       <label class="check"><input type="checkbox" id="fastRv"> Plan for the fastest upgrade (instead of the most coin)</label>
       <div id="rvInfo"></div>
     </section>
 
-    <section class="panel">
+    <section class="panel adv">
       <h2>Recipes you have</h2>
       <div class="hint">Everything your facilities, modules and notes allow. Untick what you don't have.</div>
       <div class="row"><button id="allOn">Tick all</button><button id="allOff">Untick all</button></div>
@@ -192,47 +202,47 @@
         <button id="export">Save setup to file</button>
         <label><button id="importBtn" type="button">Load setup file</button><input type="file" id="import" accept=".json" hidden></label>
       </div>
-      <div class="row"><button id="reset">Reset to defaults</button></div>
-      <div class="hint">Your setup is also remembered in this browser.</div>
+      <div class="row adv"><button id="reset">Reset to defaults</button></div>
+      <div class="hint adv">Your setup is also remembered in this browser.</div>
     </section>
   </div>
 
   <div id="results">
     <div id="warnings"></div>
-    <section class="panel">
+    <section class="panel adv">
       <h2>Aniimo budget</h2>
       <div id="budget"></div>
     </section>
     <section class="panel">
       <h2>The plan</h2>
-      <div class="hint">How many of each facility to set to each recipe, and how busy a bench is. Coin/h is what that row's product earns after its ingredients; a row that feeds another row shows where it goes. The rows and the lines under the table add up to the total at the top.</div>
-      <div class="tablewrap"><table><thead><tr><th data-sort="facility">Facility</th><th class="num" data-sort="count">How many</th>
-        <th data-sort="makes">Makes each cycle</th><th class="num" data-sort="perhour">Per hour</th><th class="num" data-sort="cycle">Cycle</th>
+      <div class="hint adv">How many of each facility to set to each recipe, and how busy a bench is. Coin/h is what that row's product earns after its ingredients; a row that feeds another row shows where it goes. The rows and the lines under the table add up to the total at the top.</div>
+      <div class="tablewrap"><table id="planTable"><thead><tr><th data-sort="facility">Facility</th><th class="num" data-sort="count">How many</th>
+        <th data-sort="makes"><span class="adv">Makes each cycle</span><span class="simple-only">What to put</span></th><th class="num" data-sort="perhour">Per hour</th><th class="num" data-sort="cycle">Cycle</th>
         <th class="num" data-sort="coin">Coin/h</th><th data-sort="worker">Worker</th></tr></thead>
         <tbody id="lines"></tbody></table></div>
-      <div id="planTotal"></div>
-      <div id="byHand"></div>
+      <div id="planTotal" class="adv"></div>
+      <div id="byHand" class="adv"></div>
     </section>
     <div class="grid2">
-      <section class="panel"><h2>Environment devices to place</h2><table><tbody id="devicesOut"></tbody></table></section>
-      <section class="panel"><h2>Power</h2><table><tbody id="powerOut"></tbody></table></section>
-      <section class="panel"><h2>Sell per hour</h2><table><tbody id="sold"></tbody></table></section>
-      <section class="panel" style="grid-column: 1 / -1"><h2>Aniimo you need</h2><table class="sortable"><thead><tr><th data-type="text">Job</th><th class="num" data-type="num">Full time</th>
+      <section class="panel" id="devicesPanel"><h2>Environment devices to place</h2><table><tbody id="devicesOut"></tbody></table></section>
+      <section class="panel" id="powerPanel"><h2>Power</h2><table><tbody id="powerOut"></tbody></table></section>
+      <section class="panel adv"><h2>Sell per hour</h2><table><tbody id="sold"></tbody></table></section>
+      <section class="panel adv" style="grid-column: 1 / -1"><h2>Aniimo you need</h2><table class="sortable"><thead><tr><th data-type="text">Job</th><th class="num" data-type="num">Full time</th>
         <th data-type="num">Aniimo that can do it</th></tr></thead><tbody id="abilities"></tbody></table>
-        <div class="hint">Full-time workers per job type, and the Aniimo that can do it (best level first; a level above
+        <div class="hint adv">Full-time workers per job type, and the Aniimo that can do it (best level first; a level above
           the requirement is much faster on many benches). The letter is the personality that gives +20% on that bench.
           Crop work (planting, watering, harvest) is shared by the rest of your Aniimo.</div></section>
-      <section class="panel" style="grid-column: 1 / -1"><h2>Suggested roster</h2>
-        <div class="hint">The fewest Aniimo that cover all the work. Full-time jobs get their own Aniimo; part-time jobs are
+      <section class="panel" style="grid-column: 1 / -1"><h2><span class="adv">Suggested roster</span><span class="simple-only">Minimum roster</span></h2>
+        <div class="hint adv">The fewest Aniimo that cover all the work. Full-time jobs get their own Aniimo; part-time jobs are
           grouped on Aniimo that can do several of them. <b>Ideal personality</b>: the letters that give +20% on its benches
           (one letter per pair E/I, S/N, T/F, J/P; ? = does not matter). <b>Alternatives</b>: other Aniimo that can do all
           the same jobs, best first, if you don't have the suggested one.</div>
         <div class="tablewrap" id="roster"></div></section>
-      <section class="panel" style="grid-column: 1 / -1"><h2>Best case</h2>
-        <label class="check"><input type="checkbox" id="bestPrismana"> Include Prismana Aniimo</label>
+      <section class="panel" style="grid-column: 1 / -1"><h2><span class="adv">Best case</span><span class="simple-only">Ideal roster</span></h2>
+        <label class="check adv"><input type="checkbox" id="bestPrismana"> Include Prismana Aniimo</label>
         <div id="best"></div></section>
-      <section class="panel"><h2>Food eaten per hour</h2><table><tbody id="eaten"></tbody></table></section>
-      <section class="panel"><h2>Seeds to buy per hour</h2><table><tbody id="bought"></tbody></table></section>
+      <section class="panel adv"><h2>Food eaten per hour</h2><table><tbody id="eaten"></tbody></table></section>
+      <section class="panel adv"><h2>Seeds to buy per hour</h2><table><tbody id="bought"></tbody></table></section>
     </div>
   </div>
 </main>
@@ -305,12 +315,29 @@
     disabledRecipes: [],
   };
 
+  // Simple or Advanced, remembered per browser (user, 2026-10-02: simple by default, a click on Advanced
+  // opens Advanced next time). Both modes plan the SAME setup; simple mode only shows less (user: "click on
+  // simple to see a simple interface but their config set").
+  const MODE = "aniimo-planner-mode";
+  let simple = (() => { try { return localStorage.getItem(MODE) !== "advanced"; } catch (e) { return true; } })();
+  function setMode(m) {
+    simple = m === "simple";
+    try { localStorage.setItem(MODE, simple ? "simple" : "advanced"); } catch (e) { /* private window */ }
+    document.body.classList.toggle("simple", simple);
+  }
+
+  // no saved setup (first visit, Reset): RV 5 with everything it allows built and maxed (user, 2026-10-02;
+  // RV 1 was asked first, but it has 0 home slots for Aniimo, so its plan is empty);
+  // filled by fresh() once the RV helpers below exist
+  let firstVisit = false;
   let S = load();
 
   function load() {
     try { const s = JSON.parse(localStorage.getItem(STORE)); if (s && s.facilities) return Object.assign(clone(DEFAULT), s); } catch (e) { /* private window */ }
+    firstVisit = true;
     return clone(DEFAULT);
   }
+  function fresh() { S = clone(DEFAULT); S.rv = 5; S.reserved = 0; S.rvGoal = { level: "" }; S.sort = { key: "coin", dir: -1 }; fillToMax(); }
   function save() { try { localStorage.setItem(STORE, JSON.stringify(S)); } catch (e) { /* ignore */ } }
   function clone(o) { return JSON.parse(JSON.stringify(o)); }
 
@@ -321,30 +348,23 @@
     sel.value = S.rv;
     sel.onchange = () => {
       S.rv = Number(sel.value);
-      // user requests: a new RV puts every facility at the highest level AND the highest count it allows,
-      // and every module at its highest level (all still editable afterwards)
-      const L = P.rvLimits(D, S.rv);
-      for (const n of FAC_NAMES) {
-        const f = S.facilities[n] = S.facilities[n] || { count: 0, level: 1 };
-        if (L.facilities[n]) f.level = L.facilities[n];
-        if (L.counts[n] != null) f.count = L.counts[n];
-      }
-      Object.assign(S.modules, L.modules);
-      S.cap = capFor();
+      fillToMax();
       if (S.rvGoal && Number(S.rvGoal.level) <= S.rv) S.rvGoal.level = "";   // back to "the next one"
       renderAll();
     };
-    $("applyMax").onclick = () => {
-      const L = P.rvLimits(D, S.rv);
-      for (const n of FAC_NAMES) {
-        const f = S.facilities[n] = S.facilities[n] || { count: 0, level: 1 };
-        if (L.facilities[n]) f.level = L.facilities[n];
-        if (L.counts[n] != null) f.count = L.counts[n];
-      }
-      Object.assign(S.modules, L.modules);
-      S.cap = capFor();
-      renderAll();
-    };
+    $("applyMax").onclick = () => { fillToMax(); renderAll(); };
+  }
+  // user requests: a new RV puts every facility at the highest level AND the highest count it allows,
+  // and every module at its highest level (all still editable afterwards)
+  function fillToMax() {
+    const L = P.rvLimits(D, S.rv);
+    for (const n of FAC_NAMES) {
+      const f = S.facilities[n] = S.facilities[n] || { count: 0, level: 1 };
+      if (L.facilities[n]) f.level = L.facilities[n];
+      if (L.counts[n] != null) f.count = L.counts[n];
+    }
+    Object.assign(S.modules, L.modules);
+    S.cap = capFor();
   }
   // Aniimo cap = home places for the RV + RV Park places from the Signal Transmitter's level
   // (user, 2026-09-28: the cap did not change with the RV; the game shows 32 at RV 11 = 30 + 2)
@@ -577,9 +597,19 @@
   $("importBtn").onclick = () => $("import").click();
   $("import").onchange = (e) => {
     const f = e.target.files[0]; if (!f) return;
-    f.text().then((t) => { S = Object.assign(clone(DEFAULT), JSON.parse(t)); renderAll(); });
+    e.target.value = "";                           // the same file can be picked again
+    f.text().then((t) => {
+      let s = null;
+      try { s = JSON.parse(t); } catch (err) { /* not JSON */ }
+      const obj = (v) => v && typeof v === "object" && !Array.isArray(v);
+      if (!obj(s) || !obj(s.facilities)) {
+        $("warnings").insertAdjacentHTML("afterbegin", `<div class="warn">${T("That file is not a setup file.")}</div>`);
+        return;
+      }
+      S = Object.assign(clone(DEFAULT), s); renderAll();
+    });
   };
-  $("reset").onclick = () => { S = clone(DEFAULT); renderAll(); };
+  $("reset").onclick = () => { fresh(); renderAll(); };
 
   // ---------- results ----------
   let timer = null;
@@ -620,7 +650,10 @@
     if (p.status !== "optimal") {
       $("headline").textContent = T("No plan");
       $("subline").textContent = T(p.status);
-      for (const id of ["lines", "sold", "eaten", "bought", "abilities", "devicesOut", "powerOut"]) $(id).innerHTML = "";
+      for (const id of ["lines", "sold", "eaten", "bought", "abilities", "devicesOut", "powerOut", "roster", "best", "planTotal", "byHand"]) $(id).innerHTML = "";
+      $("devicesPanel").classList.add("nothing"); $("powerPanel").classList.add("nothing");
+      // the headline is hidden in simple mode: the same words go above the warnings there (Fable review #1)
+      $("warnings").insertAdjacentHTML("afterbegin", `<div class="warn simple-only"><b>${T("No plan")}</b> · ${T(p.status)}</div>`);
       $("budget").innerHTML = "";
       renderRvInfo(p);
       return;
@@ -666,10 +699,11 @@
       return [...by].map(([k, n]) => { const [f, i] = k.split("|"); return T("{0} {1} of {2}", n, N.fac(f), N.item(i)); }).join(", ");
     };
     $("devicesOut").innerHTML = p.devices.map((d) => `<tr><td>${facIco(d.facility, true)}<b>${T("{0} {1}, set to {2}", d.place, N.fac(d.facility), T(d.setting))}</b>
-        <div>${T("Place it over: {0}", over(d))}</div>${(d.slow || []).map((x) => `<div class="hint">${T("{0} grows at {1}% here.", N.item(x.item), fmt(x.ratio * 100))}</div>`).join("")}</td><td class="muted">${N.job(d.worker)}</td></tr>`).join("")
+        <div>${T("Place it over: {0}", over(d))}</div>${(d.slow || []).map((x) => `<div class="hint adv">${T("{0} grows at {1}% here.", N.item(x.item), fmt(x.ratio * 100))}</div>`).join("")}</td><td class="muted adv">${N.job(d.worker)}</td></tr>`).join("")
       || `<tr><td class="muted">${S.devices === false ? T("turned off") : T("none worth placing")}</td></tr>`;
     // overlapping areas add up (HomelandEnvManager: a plot's temperature is the sum of every device touching it,
     // -2..+2): two Warm make Scorching, Warm beside Cool make 0
+    $("devicesPanel").classList.toggle("nothing", !p.devices.length);
     if (p.devices.length > 1) $("devicesOut").innerHTML += `<tr><td class="hint" colspan="2">${T("Keep each plot under one device: where two areas overlap, their temperatures add up (Warm + Cool = none).")}</td></tr>`;
     // Power (2026-10-01): how many generators and who works them, what goes on them, and how much is used.
     // Only full 120% is planned, so it also says never to add more (that slows every machine).
@@ -683,9 +717,11 @@
       : !pw.generators ? `<tr><td class="muted">${T("none worth placing")}</td></tr>`
       : `<tr><td>${facIco(D.power.generatorFacility, true)}<b>${T("{0} {1} level {2}", pw.generators, N.fac(D.power.generatorFacility), pw.level)}</b>
           <div>${T("Connect: {0}", [...machines].map(([k, n]) => { const [f, i] = k.split("|"); return T("{0} {1} on {2}", n, N.fac(f), N.item(i)); }).join(", "))}</div>
-          <div class="hint">${T("Power used {0} of {1}: every machine at 120%. Do not add more machines: drawing more than {2} slows all of them.",
-            fmt(pw.draw), fmt(pw.produce), fmt(pw.produce / pw.maxRate))}${pw.generators > 1 ? " " + T("Link the generators into one network with power poles.") : ""}</div></td>
-        <td class="muted">${N.job(pw.worker)}</td></tr>`;
+          <div class="hint adv">${T("Power used {0} of {1}: every machine at 120%. Do not add more machines: drawing more than {2} slows all of them.",
+            fmt(pw.draw), fmt(pw.produce), fmt(pw.produce / pw.maxRate))}${pw.generators > 1 ? " " + T("Link the generators into one network with power poles.") : ""}</div>
+          <div class="hint simple-only">${T("Do not add more machines: it slows all of them.")}${pw.generators > 1 ? " " + T("Link the generators into one network with power poles.") : ""}</div></td>
+        <td class="muted adv">${N.job(pw.worker)}</td></tr>`;
+    $("powerPanel").classList.toggle("nothing", !(pw && pw.generators));
     lastPlan = p;
     renderRvInfo(p);
     renderRest(p);
@@ -716,6 +752,7 @@
   // "busy 0%" read as "not used" for a row that runs 0.46% (audit 2026-10-02): under 1% says so
   const busyPct = (v) => (v > 0 && v < 0.01 ? "<1%" : fmt(v * 100) + "%");
   function renderLines() {
+    S.sort = S.sort || { key: "coin", dir: -1 };   // a Reset or an old setup file has none
     const get = SORT_KEYS[S.sort.key] || SORT_KEYS.coin;
     const rows = lastLines.slice().sort((a, b) => {
       const x = get(a), y = get(b);
@@ -738,9 +775,13 @@
         // one recipe per bench: say how many benches are set to this recipe, then how busy they are
         if (l.benches != null && l.count < l.benches - 0.005) many = `<b>${l.benches}</b> <span class="muted">${l.benches === 1 ? T("bench") : T("benches")}</span> · <span title="${T("exact: {0}", fmt(l.count, 2))}">${T("busy {0}", "<b>" + busyPct(l.count / l.benches) + "</b>")}</span>`;
       }
+      // simple mode: only what to build and set (user: "no numbers, just the config to follow")
+      const simpleMany = whole.has(l) ? (l.kind === "dedicated" ? `<b>${whole.get(l)}</b>` : `<b>${whole.get(l)}</b> <span class="muted">${whole.get(l) === 1 ? T("plot") : T("plots")}</span>`)
+        : `<b>${l.benches != null ? l.benches : Math.max(1, Math.ceil(l.count - 0.005))}</b>`;
+      const simpleMakes = r ? `<span class="makes">${r.out.map(([i]) => itemIco(i) + N.item(i)).join(" + ")}${variantHtml(r)}</span>` : "";
       const perHour = r ? r.out.map(([i, n]) => `${itemIco(i)}${fmt(n * cycles, n * cycles < 10 ? 1 : 0)}`).join(" ") : "";
       return `<tr><td>${facIco(l.facility, true)}${N.fac(l.facility)}${l.zone ? ' <span class="pill">' + N.zone(l.zone) + "</span>" : ""}${l.kind === "electric" ? ' <span class="pill">' + T("E-mode") + "</span>" : ""}</td>
-      <td class="num" style="white-space:nowrap">${many}</td><td>${makesHtml(l.recipeId)}${l.note ? ` <span class="pill">${T("note")}</span>` : ""}</td>
+      <td class="num" style="white-space:nowrap"><span class="adv">${many}</span><span class="simple-only">${simpleMany}</span></td><td><span class="adv">${makesHtml(l.recipeId)}</span><span class="simple-only">${simpleMakes}</span>${l.note ? ` <span class="pill">${T("note")}</span>` : ""}</td>
       <td class="num" style="white-space:nowrap">${perHour}</td>
       <td class="num">${T("{0} min", fmt(l.minutesPerCycle, 1))}</td><td class="num">${coinCell(l)}</td><td class="muted">${l.kind === "electric" ? T("no Aniimo") : N.job(l.worker)}</td></tr>`;
     }).join("");
@@ -764,6 +805,7 @@
   document.querySelectorAll("th[data-sort]").forEach((th) => {
     th.onclick = () => {
       const k = th.dataset.sort;
+      S.sort = S.sort || { key: "coin", dir: -1 };   // an old setup file has none, and no plan may have run yet
       // text columns start A to Z, number columns start highest first
       S.sort = S.sort.key === k ? { key: k, dir: -S.sort.dir } : { key: k, dir: ["facility", "makes", "worker"].includes(k) ? 1 : -1 };
       save(); renderLines();
@@ -801,24 +843,45 @@
       return moreList(alts.map((a) => `${aniName(a)} <span class="muted">${jobsAb.map((ab) => N.ab(ab) + " " + (a.ab[ab] || 0)).join(", ")}
         · ${T("{0} abilities", Object.keys(a.ab).length)}</span>`), 6, "<br>");
     };
+    // job -> facilities it works on, from every place planner.plan puts a job: plan rows (crop rows list
+    // theirs in cropJobs), environment devices, the Crackle Generators and the by-hand facilities
+    const jobFacilities = (res) => {
+      const w = {};
+      const add = (job, fac) => { if (job && fac) (w[job] = w[job] || new Set()).add(fac); };
+      for (const l of res.lines || []) {
+        if (l.kind === "crop") for (const k of Object.keys(l.cropJobs || {})) add(k, l.facility);
+        else if (l.kind !== "electric") add(l.worker, l.facility);
+      }
+      for (const d of res.devices || []) add(d.worker, d.facility);
+      if (res.power && res.power.generators && D.power) add(res.power.worker, D.power.generatorFacility);
+      for (const h of res.byHand || []) add(h.worker, h.facility);   // E-mode ones have no worker
+      return Object.fromEntries(Object.entries(w).map(([k, v]) => [k, [...v]]));
+    };
     const rosterHtml = (res, title) => {
       const R = P.roster(pool(), res, !!S.bestPrismana);
       const rows = R.members.map((m) => {
         const ip = P.idealPersonality(res, m);
         const alts = P.alternatives(pool(), m, !!S.bestPrismana, res && res.abilityLevels, res && res.familyLevels);
         const work = m.jobs.reduce((acc, j) => acc + j.load, 0);
+        // the facilities its jobs run on (the job names mean nothing without the Worker column); a job found
+        // nowhere keeps its name rather than an empty cell
+        const where = jobFacilities(res);
+        const facs = [...new Set(m.jobs.flatMap((j) => where[j.job] || []))];
+        const facCell = facs.map((f) => facIco(f) + N.fac(f)).concat(m.jobs.filter((j) => !where[j.job]).map((j) => N.job(j.job))).join(" · ");
         return `<tr><td style="white-space:nowrap" data-v="${N.ani(m.aniimo)}">${m.count}x <b>${aniIco(m.aniimo, true)}${N.ani(m.aniimo)}</b>${m.aniimo.prismana ? ' <span class="pill">Prismana</span>' : ""}
           <div class="muted" style="font-size:12px">${N.form(m.aniimo.form, m.aniimo.fn || "Basic Form")}</div></td>
-          <td class="muted" data-v="${Object.keys(m.aniimo.ab).length * 100 + Object.values(m.aniimo.ab).reduce((a, b) => a + b, 0)}">${abTitle(m.aniimo)}</td>
-          <td data-v="${work * m.count}">${m.jobs.map((j) => N.job(j.job) + (m.count === 1 && j.load < 0.995 ? " (" + fmt(j.load * 100) + "%)" : "")).join(" · ")}</td>
-          <td data-v="${ip.share}">${!Object.keys(ip.help).length ? `<span class="muted">${T("any (no bench bonus for these jobs)")}</span>`
+          <td class="simple-only">${facCell}</td>
+          <td class="muted adv" data-v="${Object.keys(m.aniimo.ab).length * 100 + Object.values(m.aniimo.ab).reduce((a, b) => a + b, 0)}">${abTitle(m.aniimo)}</td>
+          <td class="adv" data-v="${work * m.count}">${m.jobs.map((j) => N.job(j.job) + (m.count === 1 && j.load < 0.995 ? " (" + fmt(j.load * 100) + "%)" : "")).join(" · ")}</td>
+          <td class="adv" data-v="${ip.share}">${!Object.keys(ip.help).length ? `<span class="muted">${T("any (no bench bonus for these jobs)")}</span>`
             : `<b style="letter-spacing:.08em">${ip.code}</b><div class="muted" style="font-size:12px">${Object.entries(ip.help).map(([k, f]) => k + ": " + f.map(N.fac).join(", ")).join(" · ")}
               · ${T("+20% on {0}% of its work", fmt(ip.share * 100))}</div>`}</td>
-          <td style="font-size:12px" data-v="${alts.length}">${altHtml(m, res)}</td></tr>`;
+          <td class="adv" style="font-size:12px" data-v="${alts.length}">${altHtml(m, res)}</td></tr>`;
       }).join("");
-      return `<div class="hint" style="margin-top:6px"><b>${T("{0}: {1} Aniimo.", title || T("Suggested roster"), R.total)}</b> ${T("Click a column to sort.")}</div>
-        <table class="sortable"><thead><tr><th data-type="text">${T("Aniimo")}</th><th data-type="num">${T("Jobs it can do")}</th><th data-type="num">${T("Works on")}</th>
-        <th data-type="num">${T("Ideal personality")}</th><th data-type="num">${T("Alternatives")}</th></tr></thead><tbody>${rows}</tbody></table>`
+      return `<div class="hint adv" style="margin-top:6px"><b>${T("{0}: {1} Aniimo.", title || T("Suggested roster"), R.total)}</b> ${T("Click a column to sort.")}</div>
+        <table class="sortable"><thead><tr><th data-type="text">${T("Aniimo")}</th><th class="simple-only" data-type="text">${T("Put it on")}</th>
+        <th class="adv" data-type="num">${T("Jobs it can do")}</th><th class="adv" data-type="num">${T("Works on")}</th>
+        <th class="adv" data-type="num">${T("Ideal personality")}</th><th class="adv" data-type="num">${T("Alternatives")}</th></tr></thead><tbody>${rows}</tbody></table>`
         + (R.uncovered.length ? `<div class="warn">${T("No Aniimo can do: {0}", R.uncovered.map(N.job).join(", "))}</div>` : "");
     };
     window.__rosterHtml = rosterHtml;
@@ -846,12 +909,12 @@
       return `<tr><td style="white-space:nowrap"><b>${N.job(k)}</b></td><td class="num">${Math.ceil(v - 1e-6)}</td>
         <td>${T("level {0}", "<b>" + (lv ?? "-") + "</b>")}: ${top}</td></tr>`;
     }).join("");
-    $("best").innerHTML = `<div class="row"><span>${T("{0} Home Coin / hour with the best Aniimo", "<b>" + fmt(b.coinPerHour) + "</b>")}
+    $("best").innerHTML = `<div class="adv"><div class="row"><span>${T("{0} Home Coin / hour with the best Aniimo", "<b>" + fmt(b.coinPerHour) + "</b>")}
         ${T("({0} / day)", fmt(b.coinPerDay))}</span><span class="${gain > 0 ? "" : "muted"}">${T("{0} / hour vs your current plan", (gain >= 0 ? "+" : "") + fmt(gain))}</span></div>
       <div class="hint">${T("Same facilities, RV and options; every job gets the highest ability level that exists {0}, with a matching personality.",
         S.bestPrismana ? T("(Prismana forms included)") : T("(without Prismana forms)"))}</div>
       ${b.capped ? `<div class="hint">${T(" · best found in {0} s", P.solverTimeLimit()).replace(/^ · /, "")}</div>` : ""}
-      <table><tbody>${rows}</tbody></table>` + window.__rosterHtml(b, T("Best-case roster"));
+      <table><tbody>${rows}</tbody></table></div>` + window.__rosterHtml(b, T("Best-case roster"));
   }
 
   function renderAll() {
@@ -875,6 +938,10 @@
     window.I18N.translatePage(document.body);
     buildInfo(); buildRv(); renderAll();
   };
+  $("advancedBtn").onclick = () => setMode("advanced");
+  $("simpleBtn").onclick = () => setMode("simple");
+  document.body.classList.toggle("simple", simple);
+  if (firstVisit) fresh();
   buildRv();
   renderAll();
 })();

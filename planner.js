@@ -1183,8 +1183,10 @@
       // by-hand items at full speed, per hour (what the page shows under the plan)
       byHand: handRecipes.map(({ r, c }, k) => {
         const rate = handOn.has(k) ? handOn.get(k).perHourE : c.perHour;   // the E timer sets the pace in E-mode
+        // worker = the abilityNeeds key its Aniimo fills (the page's rosters map it to this facility); none in E-mode
+        const op = handOn.has(k) ? null : mainOp(r);
         return { recipeId: r.id, facility: r.fac[0][0], perHour: rate * r.out[0][1], needs: r.in.map(([i, q]) => [i, q * rate]),
-          mode: handOn.has(k) ? "E-mode" : "Aniimo" };
+          mode: handOn.has(k) ? "E-mode" : "Aniimo", worker: op ? jobName(D, op.ab, op.lv, r.fam) : null };
       }),
       coinPerHour: coin, coinPerDay: coin * 24,
       lines, sold, bought, eaten, devices, fullTime,

@@ -11,6 +11,12 @@ Open it in your browser: **https://shinumino.github.io/aniimo-homeland-planner/*
 Or use it offline: download this repository (green **Code** button, then **Download ZIP**), unzip it
 and open `index.html`.
 
+It opens in **simple mode**: pick your RV level and it assumes everything that RV allows is built and
+upgraded (all its production plots bought too), then shows what to set on each facility, the fewest Aniimo that run it, and the ideal Aniimo
+to aim for. Press **Advanced mode** (top right) to enter your own setup (facilities, modules, Recipe
+Notes, options) and see the numbers; back in simple mode, the plan uses that setup. The page remembers
+which mode you used last, and **Save setup to file** / **Load setup file** work in both modes.
+
 Nothing to install. The planning runs in your browser on your own PC, and your settings are kept in
 your browser. The website counts visits anonymously with [GoatCounter](https://www.goatcounter.com/)
 (no cookies, no personal data); the offline copy counts nothing.

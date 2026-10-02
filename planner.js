@@ -655,7 +655,12 @@
       // a device only helps crops that ask for a temperature or light; others stay off device plots,
       // and a facility the devices cannot cover (coverage 0) only gets the no-device zone
       const zs = r.k === "production" ? (needsEnv(r) && coverOf(fac) > 0 ? zones : [neutral]) : [null];
-      for (const z of zs) { const c = buildColumn(D, inp, r, fac, z); if (c) cols.push(c); }
+      for (const z of zs) {
+        // a device setting only for crops it speeds up (user, 2026-10-02: Cherry Blossom wants Warm +1; under
+        // Scorching +2 it is 1 off, 80%, exactly as with no device, and the plan listed it there for nothing)
+        if (z && z !== neutral && !(zoneRatio(r, z) > zoneRatio(r, neutral))) continue;
+        const c = buildColumn(D, inp, r, fac, z); if (c) cols.push(c);
+      }
     }
     // E-mode (user, 2026-10-01): a machine whose level has a power need can run the recipe's E twin. Its only
     // step is operation 5002, a timer (type 3): no Aniimo, food or personality; `time` seconds at 100% power.
@@ -749,7 +754,14 @@
     // History (user, 2026-09-28): first nothing was set aside (Pro had no Clay), then ALL of the ingredient
     // was held back, so ticking Mega could not sell a single Shell and the plan moved 5 Mines to Clay.
     const handRecipes = (inp.byHand || []).map(Number).map((id) => D.recipes.find((r) => r.id === id)).filter(Boolean)
-      .map((r) => ({ r, c: buildColumn(D, inp, r, r.fac[0][0], null) })).filter((x) => x.c);
+      .map((r) => ({ r, c: buildColumn(D, inp, r, r.fac[0][0], null) })).filter((x) => x.c)
+      // ... and only if the layout can make its ingredients: Mega ticked at RV 6 (no Mine digs Shell before RV 9)
+      // kept a Lightning 3 seat and "set aside 12 Shell/h" next to "Nothing can make Shell" (audit 2026-10-02)
+      .filter(({ r }) => {
+        const miss = r.in.filter(([i]) => !cols.some((c) => c.r.out.some(([o]) => o === i)));
+        for (const [i] of miss) warnings.push("Nothing in your layout can make " + (D.items[i] ? D.items[i].n : i) + ".");
+        return !miss.length;
+      });
     // A ticked facility in E-mode (user, 2026-10-01: "add the Aniipod Maker into the calculation, if it is worth
     // E-power or not"). In E-mode it runs its own 120% timer whenever its ingredients are in storage, so it
     // makes MORE than on its Aniimo and eats that much more (Fable review 2 #1: the first version set aside the
@@ -771,7 +783,6 @@
     for (const { r, c } of handRecipes) for (const [i, q] of r.in) handNeed.set(i, (handNeed.get(i) || 0) + q * c.perHour);
     // "can make": some recipe in the layout outputs it (Clay is in `items` through Pottery's input even with
     // no Mine, and the plan then failed with "cannot feed 32 Aniimo"; Fable review 2 #4)
-    for (const i of handNeed.keys()) if (!cols.some((c) => c.r.out.some(([o]) => o === i))) warnings.push("Nothing in your layout can make " + (D.items[i] ? D.items[i].n : i) + ".");
     const usedCols = [...new Set([...consumers.values()].flat())];
     const ownU = usedCols.filter((j2) => inp.facilities[cols[j2].fac].count > 1);
     const uBase = yBase + whole.length, uOwn = new Map(ownU.map((j2, k) => [j2, uBase + k]));
@@ -1040,7 +1051,12 @@
         facility: c.fac, zone: c.zone && c.zone.name !== "No device" ? c.zone.name : null,
         mbti: D.facilities[c.fac] ? D.facilities[c.fac].mbti : null,
         recipeId: c.r.id, makes: describe(D, c.r), count: x, kind: c.kind,
-        benches: yOf.has(j) ? Math.round(res.x[yOf.get(j)]) : null,   // whole benches set to this recipe
+        // whole benches set to this recipe: no more than the work needs. Benches above that are a tie the solver's
+        // gap leaves (maxed RV 13: "Carousel Mill 2 benches, busy 15%", 1 bench gives the same coin; audit
+        // 2026-10-02). Locked facilities (and E-mode on them) run flat out, so they keep the solver's count.
+        benches: !yOf.has(j) ? null : c.kind === "dedicated" || c.locked ? Math.round(res.x[yOf.get(j)])
+          : Math.min(Math.round(res.x[yOf.get(j)]), Math.max(1, Math.ceil(x - 1e-6))),
+        pw: c.kind === "electric" ? c.pw : undefined,
         minutesPerCycle: c.minutes, cyclesPerHour: c.perHour * x,
         lineValue: (valueOut - valueIn) * c.perHour * x,       // same convention as the site's lines
         aniimo: c.workerHours * x,
@@ -1062,11 +1078,22 @@
       const under = {};
       cols.forEach((c, j) => { if (c.zone === z && res.x[j] > 1e-6) under[c.fac] = (under[c.fac] || 0) + res.x[j]; });
       const crops = cols.filter((c, j) => c.zone === z && res.x[j] > 1e-6).map((c) => describe(D, c.r));
-      return { facility: z.fac, setting: z.setting, count: placed, place: Math.ceil(placed - 1e-6), worker: z.worker, max: z.max, under, crops };
+      // crops under it at less than full speed (one setting per device: Maple Syrup, wanting Cold -2, at 80%
+      // under Cool -1 beside Ginseng; correct, but it read like a bug without the number; audit 2026-10-02)
+      const slow = [...new Set(cols.filter((c, j) => c.zone === z && res.x[j] > 1e-6 && zoneRatio(c.r, z) < 1)
+        .map((c) => c.r.out[0][0] + "|" + zoneRatio(c.r, z)))].map((k) => { const [i, rt] = k.split("|"); return { item: Number(i), ratio: Number(rt) }; });
+      // no more devices than their plots need (maxed RV 20: "2 Cooling Units" over 13 Farmland, one covers 16;
+      // a tie under the solver's gap; audit 2026-10-02)
+      const need = Math.max(1, Math.ceil(Object.entries(under).reduce((a, [f, n2]) => a + n2 / coverOf(f), 0) - 1e-6));
+      const place = Math.min(Math.ceil(placed - 1e-6), need);
+      return { facility: z.fac, setting: z.setting, count: Math.min(placed, place), place, worker: z.worker, max: z.max, under, crops, slow };
     }).filter((d) => d.count > 1e-6);
     const zoneSeats = devices.reduce((acc, d) => acc + d.count, 0);
-    const G = gen ? Math.round(res.x[gIdx]) : 0;
     const handOn = new Map(handE.filter((h, i) => Math.round(res.x[hBase + i]) === 1).map((h) => [h.k, h]));   // ticked, in E-mode
+    // power drawn by the machines the plan sets (lines, whole machines) and ticked facilities in E-mode
+    const eDraw = lines.reduce((a, l) => a + (l.kind === "electric" ? l.benches * l.pw : 0), 0) + [...handOn.values()].reduce((a, h) => a + h.pw, 0);
+    // and no more generators than that needs at 120% (same tie as benches and devices)
+    const G = !gen ? 0 : Math.min(Math.round(res.x[gIdx]), eDraw > 0 ? Math.ceil(eDraw * D.power.maxRate / gen.produce - 1e-9) : 0);
     const handSeats = handRecipes.reduce((a, { c }, k) => a + (handOn.has(k) ? 0 : c.workerHours), 0);
     const used = { dedicated: 0, bench: 0, crop: 0, electric: 0, devices: zoneSeats, byHand: handSeats, generators: G };
     for (const l of lines) used[l.kind] += l.aniimo;
@@ -1119,8 +1146,7 @@
         // its power is not counted here, so the real draw is at most what the power row allowed. An x >= y/1000
         // row per E column forced it out but made RV 15 hit the 4 s cap (measured 2026-10-01). Cost: within the
         // gap, i.e. at most ~1e-4 of coin/h (Fable review #5: maxed RV 18 cap 14, one idle Crafting Table).
-        draw: cols.reduce((a, c, j) => a + (c.kind === "electric" && res.x[j] >= 1e-6 ? Math.round(res.x[yOf.get(j)]) * c.pw : 0), 0)
-          + [...handOn.values()].reduce((a, h) => a + h.pw, 0),
+        draw: eDraw,
         maxRate: D.power.maxRate,
       } : null,
       kept: keep.map(([i, h]) => ({ item: name(i), id: i, perDay: h * 24 })),

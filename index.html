@@ -632,6 +632,7 @@
 
     lastLines = p.lines;
     lastMoney = P.lineMoney(D, p);
+    lastPlan = p;                                  // before the table: its cells read the plan (fastest upgrade)
     renderLines();
     // under the table: what leaves the plan without being sold, then the total (= the headline)
     const underLabel = (u) => u.kind === "byHand" ? T("{0} takes {1} {2}/h", N.fac(u.facility || ""), fmt(u.perHour, 1), N.item(u.id))
@@ -656,7 +657,7 @@
       return [...by].map(([k, n]) => { const [f, i] = k.split("|"); return T("{0} {1} of {2}", n, N.fac(f), N.item(i)); }).join(", ");
     };
     $("devicesOut").innerHTML = p.devices.map((d) => `<tr><td>${facIco(d.facility, true)}<b>${T("{0} {1}, set to {2}", d.place, N.fac(d.facility), T(d.setting))}</b>
-        <div>${T("Place it over: {0}", over(d))}</div></td><td class="muted">${N.job(d.worker)}</td></tr>`).join("")
+        <div>${T("Place it over: {0}", over(d))}</div>${(d.slow || []).map((x) => `<div class="hint">${T("{0} grows at {1}% here.", N.item(x.item), fmt(x.ratio * 100))}</div>`).join("")}</td><td class="muted">${N.job(d.worker)}</td></tr>`).join("")
       || `<tr><td class="muted">${S.devices === false ? T("turned off") : T("none worth placing")}</td></tr>`;
     // Power (2026-10-01): how many generators and who works them, what goes on them, and how much is used.
     // Only full 120% is planned, so it also says never to add more (that slows every machine).
@@ -692,7 +693,10 @@
   const coinCell = (l) => {
     const m = lastMoney && lastMoney.rows.get(l);
     if (!m) return fmt(l.lineValue);
-    const where = m.feeds.length ? `<span class="muted">→ ${[...new Set(m.feeds.map((id) => N.item(recipeOf(id).out[0][0])))].join(", ")}</span>` : "";
+    // fastest upgrade: a row making an RV material goes to the upgrade (it showed "0" and pointed nowhere; audit)
+    const rvGoal = lastPlan && lastPlan.fastRv && lastPlan.fastRv.reachable && recipeOf(l.recipeId).out.some(([i]) => lastPlan.fastRv.perHour.some(([k]) => k === i));
+    const where = m.feeds.length ? `<span class="muted">→ ${[...new Set(m.feeds.map((id) => N.item(recipeOf(id).out[0][0])))].join(", ")}</span>`
+      : rvGoal ? `<span class="muted">→ ${T("RV {0}", lastPlan.fastRv.level)}</span>` : "";
     if (Math.abs(m.money) < 0.5 && where) return where;
     // part goes on to another row, the rest is sold: both (user: "Sugarcane has no arrow, it becomes Rock Candy")
     return fmt(m.money) + (where ? " " + where : "");
@@ -716,7 +720,7 @@
         many = `<b>${w}</b> <span class="muted" title="${T("exact: {0}", fmt(l.count, 2))}">${w === 1 ? T("plot") : T("plots")}</span>`;
         if (l.kind === "dedicated") many = `<b>${w}</b>`;
       } else {
-        many = l.count >= 0.995 ? `<b>${fmt(l.count, 1)}</b>` : `<span title="${T("exact: {0}", fmt(l.count, 2))}">${T("busy {0}", "<b>" + fmt(l.count * 100) + "%</b>")}</span>`;
+        many = l.benches != null && l.count >= l.benches - 0.005 ? `<b>${l.benches}</b>` : l.count >= 0.995 ? `<b>${fmt(l.count, 1)}</b>` : `<span title="${T("exact: {0}", fmt(l.count, 2))}">${T("busy {0}", "<b>" + fmt(l.count * 100) + "%</b>")}</span>`;
         // one recipe per bench: say how many benches are set to this recipe, then how busy they are
         if (l.benches != null && l.count < l.benches - 0.005) many = `<b>${l.benches}</b> <span class="muted">${l.benches === 1 ? T("bench") : T("benches")}</span> · <span title="${T("exact: {0}", fmt(l.count, 2))}">${T("busy {0}", "<b>" + fmt(l.count / l.benches * 100) + "%</b>")}</span>`;
       }

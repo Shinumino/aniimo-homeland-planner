@@ -160,6 +160,7 @@
     "no Aniimo": "sem Aniimo",
     "generators {0}": "geradores {0}",
     "by hand {0}": "à mão {0}",
+    "{0} grows at {1}% here.": "{0} cresce a {1}% aqui.",
     "Power did not give a better plan within {0} s: this is the plan without it.": "A energia não deu um plano melhor em {0} s: este é o plano sem ela.",
     "{0} level {1} needs {2} level {1}: planning with level {3}.": "{0} nível {1} precisa do {2} nível {1}: planejando com o nível {3}.",
     "none worth placing": "nenhum vale a pena",

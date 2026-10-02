@@ -139,9 +139,8 @@
       <h2>Environment devices</h2>
       <label class="check"><input type="checkbox" id="devices"> Let the planner place Heat Furnaces, Cooling Units and Sunlamps</label>
       <div class="hint">It picks how many (up to your RV's limit), the setting, and which crops go under them.
-        Plots one device covers is an estimate from the game's sizes (9 x 9 range): check it in game and correct it here.</div>
-      <label class="row">Farmland plots under one device <input type="number" id="coverFarmland" min="0"></label>
-      <label class="row">Woodland plots under one device <input type="number" id="coverWoodland" min="0"></label>
+        A plot counts if any part of it is inside a device's area. Plots one device reaches, with the plots packed around it:</div>
+      <table class="cover"><thead><tr><th></th><th>Farmland</th><th>Woodland</th></tr></thead><tbody id="coverTable"></tbody></table>
     </section>
 
     <section class="panel">
@@ -301,7 +300,7 @@
     },
     dedicated: ["Mine", "Well", "Tidewhisper Sandcastle", "Dewy House", "Nimbus Bed", "Starfall Hammock", "Floral Windmill"],
     devices: true,
-    deviceCoverage: { Farmland: 16, Woodland: 4 },
+    deviceCoverage: {},
     values: {},
     disabledRecipes: [],
   };
@@ -416,11 +415,21 @@
 
   function renderDevices() {
     const el = $("devices"); el.checked = S.devices !== false; el.onchange = () => { S.devices = el.checked; recalc(); };
-    S.deviceCoverage = S.deviceCoverage || { Farmland: 16, Woodland: 4 };
-    for (const f of ["Farmland", "Woodland"]) {
-      const inp = $("cover" + f); inp.value = S.deviceCoverage[f];
-      inp.oninput = () => { S.deviceCoverage[f] = Number(inp.value); recalc(); };
-    }
+    // per device (2026-10-02, counted in game: 8 Woodland around a Heat Furnace or a Cooling Unit, 25 Farmland
+    // around a Cooling Unit); the planner fills in what is left empty, and upgrades the old flat 16 / 4 guess
+    S.deviceCoverage = S.deviceCoverage || {};
+    const DEV = ["Heat Furnace", "Cooling Unit", "Sunlamp"];
+    $("coverTable").innerHTML = DEV.map((d) => `<tr><td>${facIco(d)}${N.fac(d)}</td>${["Farmland", "Woodland"].map((f) =>
+      `<td><input type="number" min="0" data-dev="${d}" data-fac="${f}" value="${P.coverage(S, d, f)}"></td>`).join("")}</tr>`).join("");
+    $("coverTable").querySelectorAll("input").forEach((inp) => {
+      inp.oninput = () => {
+        const d = inp.dataset.dev, f = inp.dataset.fac;
+        const cv = {};                             // keep it per device from now on
+        for (const d2 of DEV) cv[d2] = { Farmland: P.coverage(S, d2, "Farmland"), Woodland: P.coverage(S, d2, "Woodland") };
+        cv[d][f] = Number(inp.value);
+        S.deviceCoverage = cv; recalc();
+      };
+    });
   }
 
   function renderUnreleased() {
@@ -659,6 +668,9 @@
     $("devicesOut").innerHTML = p.devices.map((d) => `<tr><td>${facIco(d.facility, true)}<b>${T("{0} {1}, set to {2}", d.place, N.fac(d.facility), T(d.setting))}</b>
         <div>${T("Place it over: {0}", over(d))}</div>${(d.slow || []).map((x) => `<div class="hint">${T("{0} grows at {1}% here.", N.item(x.item), fmt(x.ratio * 100))}</div>`).join("")}</td><td class="muted">${N.job(d.worker)}</td></tr>`).join("")
       || `<tr><td class="muted">${S.devices === false ? T("turned off") : T("none worth placing")}</td></tr>`;
+    // overlapping areas add up (HomelandEnvManager: a plot's temperature is the sum of every device touching it,
+    // -2..+2): two Warm make Scorching, Warm beside Cool make 0
+    if (p.devices.length > 1) $("devicesOut").innerHTML += `<tr><td class="hint" colspan="2">${T("Keep each plot under one device: where two areas overlap, their temperatures add up (Warm + Cool = none).")}</td></tr>`;
     // Power (2026-10-01): how many generators and who works them, what goes on them, and how much is used.
     // Only full 120% is planned, so it also says never to add more (that slows every machine).
     const pw = p.power, eL = p.lines.filter((l) => l.kind === "electric");
@@ -701,6 +713,8 @@
     // part goes on to another row, the rest is sold: both (user: "Sugarcane has no arrow, it becomes Rock Candy")
     return fmt(m.money) + (where ? " " + where : "");
   };
+  // "busy 0%" read as "not used" for a row that runs 0.46% (audit 2026-10-02): under 1% says so
+  const busyPct = (v) => (v > 0 && v < 0.01 ? "<1%" : fmt(v * 100) + "%");
   function renderLines() {
     const get = SORT_KEYS[S.sort.key] || SORT_KEYS.coin;
     const rows = lastLines.slice().sort((a, b) => {
@@ -720,9 +734,9 @@
         many = `<b>${w}</b> <span class="muted" title="${T("exact: {0}", fmt(l.count, 2))}">${w === 1 ? T("plot") : T("plots")}</span>`;
         if (l.kind === "dedicated") many = `<b>${w}</b>`;
       } else {
-        many = l.benches != null && l.count >= l.benches - 0.005 ? `<b>${l.benches}</b>` : l.count >= 0.995 ? `<b>${fmt(l.count, 1)}</b>` : `<span title="${T("exact: {0}", fmt(l.count, 2))}">${T("busy {0}", "<b>" + fmt(l.count * 100) + "%</b>")}</span>`;
+        many = l.benches != null && l.count >= l.benches - 0.005 ? `<b>${l.benches}</b>` : l.count >= 0.995 ? `<b>${fmt(l.count, 1)}</b>` : `<span title="${T("exact: {0}", fmt(l.count, 2))}">${T("busy {0}", "<b>" + busyPct(l.count) + "</b>")}</span>`;
         // one recipe per bench: say how many benches are set to this recipe, then how busy they are
-        if (l.benches != null && l.count < l.benches - 0.005) many = `<b>${l.benches}</b> <span class="muted">${l.benches === 1 ? T("bench") : T("benches")}</span> · <span title="${T("exact: {0}", fmt(l.count, 2))}">${T("busy {0}", "<b>" + fmt(l.count / l.benches * 100) + "%</b>")}</span>`;
+        if (l.benches != null && l.count < l.benches - 0.005) many = `<b>${l.benches}</b> <span class="muted">${l.benches === 1 ? T("bench") : T("benches")}</span> · <span title="${T("exact: {0}", fmt(l.count, 2))}">${T("busy {0}", "<b>" + busyPct(l.count / l.benches) + "</b>")}</span>`;
       }
       const perHour = r ? r.out.map(([i, n]) => `${itemIco(i)}${fmt(n * cycles, n * cycles < 10 ? 1 : 0)}`).join(" ") : "";
       return `<tr><td>${facIco(l.facility, true)}${N.fac(l.facility)}${l.zone ? ' <span class="pill">' + N.zone(l.zone) + "</span>" : ""}${l.kind === "electric" ? ' <span class="pill">' + T("E-mode") + "</span>" : ""}</td>

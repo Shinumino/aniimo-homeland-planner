@@ -40,8 +40,8 @@
     "RV modules": "Módulos do Motorhome",
     "Environment devices": "Dispositivos de ambiente",
     "Let the planner place Heat Furnaces, Cooling Units and Sunlamps": "Deixar o planejador colocar Fornos de Calor, Resfriadores e Lâmpadas Solares",
-    "It picks how many (up to your RV's limit), the setting, and which crops go under them. Plots one device covers is an estimate from the game's sizes (9 x 9 range): check it in game and correct it here.":
-      "Ele escolhe quantos (até o limite do seu Motorhome), a configuração e quais plantações ficam embaixo. Quantos lotes um dispositivo cobre é uma estimativa pelos tamanhos do jogo (alcance 9 x 9): confira no jogo e corrija aqui.",
+    "It picks how many (up to your RV's limit), the setting, and which crops go under them. A plot counts if any part of it is inside a device's area. Plots one device reaches, with the plots packed around it:":
+      "Ele escolhe quantos (até o limite do seu Motorhome), o ajuste e quais plantações ficam sob eles. Um lote conta se qualquer parte dele estiver dentro da área do dispositivo. Lotes que um dispositivo alcança, com os lotes juntos em volta dele:",
     "Farmland plots under one device": "Lotes de Fazenda sob um dispositivo",
     "Woodland plots under one device": "Lotes de Bosque sob um dispositivo",
     "Options": "Opções",
@@ -160,6 +160,9 @@
     "no Aniimo": "sem Aniimo",
     "generators {0}": "geradores {0}",
     "by hand {0}": "à mão {0}",
+    "Farmland": "Fazenda",
+    "Woodland": "Bosque",
+    "Keep each plot under one device: where two areas overlap, their temperatures add up (Warm + Cool = none).": "Deixe cada lote sob um só dispositivo: onde duas áreas se sobrepõem, as temperaturas se somam (Morno + Fresco = nada).",
     "{0} grows at {1}% here.": "{0} cresce a {1}% aqui.",
     "Power did not give a better plan within {0} s: this is the plan without it.": "A energia não deu um plano melhor em {0} s: este é o plano sem ela.",
     "{0} level {1} needs {2} level {1}: planning with level {3}.": "{0} nível {1} precisa do {2} nível {1}: planejando com o nível {3}.",

@@ -170,6 +170,49 @@
     { fac: "Sunlamp", settings: [{ name: "Light", temp: 0, light: true, worker: "Light 1+" }] },
   ];
 
+  // Plots one device reaches (user, 2026-10-02: "a little square inside is enough"). HomelandEnvManager takes
+  // every plot whose rectangle TOUCHES the device's envBounds (9 x 9), no reduction for a partial overlap. Exact
+  // maximum of non-overlapping plots touching it, off the device's own footprint (home_object_data boundSize:
+  // Heat Furnace 1x1, Sunlamp 1x1, Cooling Unit 2x2; Woodland 4x4, Farmland 2x2), solved as a 0/1 program
+  // 2026-10-02, then corrected by the user's counts below. A best arrangement: the
+  // player's own may reach fewer, so the page keeps it editable. The old guess was 16 Farmland / 4 Woodland
+  // (whole plots inside a 9 x 9 square), which left a Cherry Blossom plot outside the user's furnace.
+  // The rule that matches the user's counts (2026-10-02): a plot counts when at least one whole square of it is
+  // inside the 9 x 9 area. Exact packing per device with its own body kept free (home_object_data boundSize),
+  // area centred on it, plots on the 1-square grid: Heat Furnace (1x1) 8 Woodland / 24 Farmland = the user's
+  // count; Cooling Unit (2x2) 8 / 24 (user counted 8 Woodland, 21 Farmland in their layout; 24 is the best
+  // packing, the user's choice); Sunlamp (1x1) as the furnace. Sizes are the same at every level.
+  const COVER = { "Heat Furnace": { Farmland: 24, Woodland: 8 }, Sunlamp: { Farmland: 24, Woodland: 8 }, "Cooling Unit": { Farmland: 24, Woodland: 8 } };
+  const OLD_COVER = { Farmland: 16, Woodland: 4 };
+  // a number per device ({ "Heat Furnace": { Woodland: 8 } }), or one for every device as setups saved before
+  // ({ Woodland: 5 }); the old guess in a saved setup means "the default", not a choice
+  function coverage(inp, device, fac) {
+    const cv = (inp && inp.deviceCoverage) || {};
+    const own = cv[device] && cv[device][fac];
+    if (own != null && own !== "") return Math.max(0, Number(own) || 0);
+    const flat = cv[fac];
+    if (flat != null && flat !== "" && Number(flat) !== OLD_COVER[fac]) return Math.max(0, Number(flat) || 0);
+    return (COVER[device] || {})[fac] || 0;
+  }
+
+  // Mixed plots around one device (user, 2026-10-02: "Woodland with Farmland and a furnace"). Exact packing
+  // (0/1 program, one whole square inside, body kept free): with k Woodland, 24 23 22 21 20 18 16 14 12
+  // Farmland still fit for k = 0..8, the same for every device. Exactly: w <= 8, w + f <= 24, 2w + f <= 28.
+  // In units of the device's own reach (u = w * 8 / Woodland reach, v = f * 24 / Farmland reach) so numbers
+  // the user types scale the same shape. The straight line before (w/8 + f/24 <= 1) allowed 0 Farmland with
+  // 8 Woodland. Summed over n devices of a setting the three limits are n times as large.
+  const PACK = [[1, 0, 8], [1, 1, 24], [2, 1, 28]];   // [a, b, c]: a*u + b*v <= c per device
+  function packUnits(inp, device, fac) {             // u or v per plot of this facility
+    const reach = coverage(inp, device, fac);
+    if (!(reach > 0)) return null;
+    return fac === "Woodland" ? { u: 8 / reach, v: 0 } : fac === "Farmland" ? { u: 0, v: 24 / reach } : { u: 0, v: 24 / reach };
+  }
+  function coverFits(inp, device, w, f, n) {
+    const W = packUnits(inp, device, "Woodland"), F = packUnits(inp, device, "Farmland");
+    const u = w ? (W ? w * W.u : Infinity) : 0, v = f ? (F ? f * F.v : Infinity) : 0;
+    return PACK.every(([a, b, c]) => a * u + b * v <= c * (n || 1) + 1e-9);
+  }
+
   function zoneRatio(r, zone) {
     if (r.light && r.force && !zone.light) return 0;          // forceEnvRequire: cannot grow at all
     if (r.temp == null) return 1;
@@ -212,7 +255,7 @@
       // is 2 x 2 and a Woodland 4 x 4, so floor(9/2)^2 = 16 and floor(9/4)^2 = 4. ESTIMATE from the
       // footprints (assumes 9 is the side of a square, not a radius): editable, confirm in game.
       devices: true,
-      deviceCoverage: { Farmland: 16, Woodland: 4 },
+      deviceCoverage: {},          // per device; empty = the reach above (coverage())
       // A bench holds one recipe (user, 2026-09-28: "all benches can craft only one recipe"; they can
       // change it by hand, but want a plan they can set and leave). Off = time-share a bench between
       // recipes, which only works if you switch them yourself.
@@ -650,11 +693,11 @@
     }
     const cols = [];
     const needsEnv = (r) => r.temp != null || r.light;
-    const coverOf = (fac) => Number((inp.deviceCoverage || {})[fac]) || 0;
+    const coverOf = (fac, device) => coverage(inp, device, fac);
     for (const { r, fac } of available(D, inp)) {
       // a device only helps crops that ask for a temperature or light; others stay off device plots,
       // and a facility the devices cannot cover (coverage 0) only gets the no-device zone
-      const zs = r.k === "production" ? (needsEnv(r) && coverOf(fac) > 0 ? zones : [neutral]) : [null];
+      const zs = r.k === "production" ? (needsEnv(r) ? zones.filter((z) => z === neutral || coverOf(fac, z.fac) > 0) : [neutral]) : [null];
       for (const z of zs) {
         // a device setting only for crops it speeds up (user, 2026-10-02: Cherry Blossom wants Warm +1; under
         // Scorching +2 it is 1 off, 80%, exactly as with no device, and the plan listed it there for nothing)
@@ -728,7 +771,9 @@
     // E-mode machines are whole in both modes: one with an E recipe set draws its power, busy or not
     // (HomelandEnvManager.checkNeedElectricCost: formula set and not disabled)
     const oneRecipe = inp.oneRecipePerBench !== false;
-    const whole = cols.map((c, j) => ((oneRecipe ? c.kind !== "crop" : c.kind === "electric") ? j : -1)).filter((j) => j >= 0);
+    // ... and so are locked facilities worked by Aniimo (Mines, Wells, pens): they cannot be time-shared, and in
+    // time-share mode the table showed "Well 0" for 0.12 of a Well (audit 2026-10-02)
+    const whole = cols.map((c, j) => ((oneRecipe ? c.kind !== "crop" : c.kind === "electric" || c.kind === "dedicated") ? j : -1)).filter((j) => j >= 0);
     const yBase = zBase + nz, yOf = new Map(whole.map((j, k) => [j, yBase + k]));
     // Routing (user, 2026-09-28): once an ingredient is in storage "the Aniimo decide" where it goes, the
     // first one to arrive takes it. So an ingredient a set bench uses goes to that one bench recipe, all
@@ -844,10 +889,13 @@
     }
     const cover = inp.deviceCoverage || {};
     zoneList.forEach((z, k) => {                   // crops under a device setting <= what those devices cover
-      const row = new Array(n).fill(0);
-      cols.forEach((c, j) => { if (c.zone === z) row[j] = 1 / coverOf(c.fac); });
-      row[zBase + k] = -1;
-      rows.push(row); b.push(0);
+      // three packing limits (PACK) instead of one straight line
+      for (const [a, b2, cap] of PACK) {
+        const pr = new Array(n).fill(0);
+        cols.forEach((c, j) => { if (c.zone === z) { const un = packUnits(inp, z.fac, c.fac); if (un) pr[j] = a * un.u + b2 * un.v; } });
+        pr[zBase + k] = -cap;
+        rows.push(pr); b.push(0);
+      }
       // and a device has at least one plot under it: a tiny coin cost was not enough, the solver's tolerance
       // (~5 coin on 50,000) let a Heat Furnace stay over nothing (sweep, 2026-09-29)
       const some = new Array(n).fill(0);
@@ -1084,7 +1132,8 @@
         .map((c) => c.r.out[0][0] + "|" + zoneRatio(c.r, z)))].map((k) => { const [i, rt] = k.split("|"); return { item: Number(i), ratio: Number(rt) }; });
       // no more devices than their plots need (maxed RV 20: "2 Cooling Units" over 13 Farmland, one covers 16;
       // a tie under the solver's gap; audit 2026-10-02)
-      const need = Math.max(1, Math.ceil(Object.entries(under).reduce((a, [f, n2]) => a + n2 / coverOf(f), 0) - 1e-6));
+      let need = 1;                                // fewest devices whose packing holds what is under them
+      while (need < 1000 && !coverFits(inp, z.fac, under.Woodland || 0, under.Farmland || 0, need)) need++;
       const place = Math.min(Math.ceil(placed - 1e-6), need);
       return { facility: z.fac, setting: z.setting, count: Math.min(placed, place), place, worker: z.worker, max: z.max, under, crops, slow };
     }).filter((d) => d.count > 1e-6);
@@ -1231,8 +1280,14 @@
     const jobs = Object.entries(result.abilityNeeds || {}).map(([job, load]) => ({ job, load, ab: parse(job) })).filter((j) => j.ab && j.load > 1e-6);
     const pool = (D.aniimo || []).filter((a) => includePrismana || !a.prismana);
     const minLv = result.abilityLevels || {}, famLv = result.familyLevels || {};
+    // "Aniimo go up to level N" (user's own Aniimo): the plan already counts level-N workers, slower, on jobs
+    // that ask for more, so the roster takes level N there and never suggests one above it (audit 2026-10-02:
+    // with level 2 it listed a level-3 Shrubclaw for Earth 3+). The best case passes exact levels instead.
+    const cap = result.inputs && result.inputs.workerMaxLevel != null && result.inputs.workerMaxLevel !== "" && !result.abilityLevels
+      ? Number(result.inputs.workerMaxLevel) : 4;
     const can = (a, j) => (!j.ab[2] || a.fam === j.ab[2])
-      && (a.ab[j.ab[0]] || 0) >= Math.max(j.ab[1], (j.ab[2] ? famLv[j.ab[2]] : minLv[j.ab[0]]) || 0);
+      && (a.ab[j.ab[0]] || 0) >= Math.max(Math.min(j.ab[1], cap), (j.ab[2] ? famLv[j.ab[2]] : minLv[j.ab[0]]) || 0)
+      && (j.ab[2] || (a.ab[j.ab[0]] || 0) <= cap);
     const out = [];
     const remaining = new Map();
     const full = result.fullTime || {};
@@ -1478,7 +1533,7 @@
       || jobLevels(b) - jobLevels(a) || a.n.localeCompare(b.n));
   }
 
-  const api = { plan, rvLimits, wholeCounts, idealPersonality, alternatives, defaults, workPerMinute, recipeChoices, candidates, bestAbilityLevels, bestCase, roster, formLabel, parseJob, familyBest, released, rvChain, rvTime, useSolver,
+  const api = { coverage, coverFits, plan, rvLimits, wholeCounts, idealPersonality, alternatives, defaults, workPerMinute, recipeChoices, candidates, bestAbilityLevels, bestCase, roster, formLabel, parseJob, familyBest, released, rvChain, rvTime, useSolver,
     lineMoney, solverName: () => (HIGHS ? "HiGHS" : "built-in"), solverTimeLimit: () => HIGHS_OPTIONS.time_limit };
   if (typeof module !== "undefined") module.exports = api; else root.Planner = api;
 })(this);

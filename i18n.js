@@ -235,11 +235,24 @@
     "Needs a free Aniimo for those benches; the plan's Aniimo count does not include them.":
       "Precisa de um Aniimo livre para essas bancadas; a contagem de Aniimo do plano não inclui eles.",
     // planner messages (translated by pattern in msg())
+    "Planning…": "Planejando…",
+    "error": "erro",
+    "No plan with whole plots fits these Aniimo.": "Nenhum plano com lotes inteiros cabe nesses Aniimo.",
     "No plan found within {0} s. Try fewer options or a smaller layout.": "Nenhum plano encontrado em {0} s. Tente menos opções ou um layout menor.",
+    "No Aniimo has {0} at level 4: planned at level 3.": "Nenhum Aniimo tem {0} no nível 4: planejado no nível 3.",
+    "The best roster needs {0} Aniimo but only {1} are free for work: it uses {2} of your hauler places.": "O melhor time precisa de {0} Aniimo, mas só {1} estão livres para trabalhar: ele usa {2} das vagas de carregadores.",
+    "The best roster needs {0} Aniimo but only {1} are free for work: it uses {2} of the places you keep for haulers and reserved Aniimo.": "O melhor time precisa de {0} Aniimo, mas só {1} estão livres para trabalhar: ele usa {2} das vagas que você deixa para carregadores e Aniimo reservados.",
+    "The best roster needs {0} Aniimo but your home has {1} places.": "O melhor time precisa de {0} Aniimo, mas sua casa tem {1} vagas.",
+    "To fit your home, these jobs use a lower level: {0}.": "Para caber na sua casa, estes trabalhos usam um nível menor: {0}.",
+    "This roster needs {0} Aniimo; you have {1} for production.": "Este time precisa de {0} Aniimo; você tem {1} para produção.",
+    "Could not find a plan with one recipe per bench; this plan shares benches between recipes.": "Não deu para achar um plano com uma receita por bancada; este plano divide bancadas entre receitas.",
     "best found in {0} s": "melhor encontrado em {0} s",
     "No Aniimo left for production: cap - reserved - haulers is {0}.": "Nenhum Aniimo sobra para a produção: limite - fora da produção - carregadores dá {0}.",
     "{0} level {1} needs RV {2}.": "{0} nível {1} precisa do Motorhome {2}.",
+    "{0} level {1} needs RV {2}: planning with level {3}.": "{0} nível {1} precisa do Motorhome {2}: planejando com o nível {3}.",
     "RV {0} allows {1} {2}, not {3}: planning with {4}.": "O Motorhome {0} permite {1} {2}, não {3}: planejando com {4}.",
+    "{0} needs {1} level {2}: not planned.": "{0} precisa de {1} nível {2}: fora do plano.",
+    "RV {0} allows {1} {2}: {3} not planned.": "O Motorhome {0} permite {1} {2}: {3} fora do plano.",
     "Nothing in your layout can make {0}.": "Nada no seu layout consegue fazer {0}.",
     "This layout cannot {0} with the Aniimo available. Lower a target, add facilities, or turn food planning off.":
       "Este layout não consegue {0} com os Aniimo disponíveis. Baixe uma meta, adicione instalações ou desligue o planejamento de comida.",
@@ -296,11 +309,15 @@
       msg: (s) => {
         if (lang !== "pt") return s;
         const rules = [
+          [/^No Aniimo has (.+) at level 4: planned at level 3\.$/, (m) => T("No Aniimo has {0} at level 4: planned at level 3.", m[1].split(", ").map((x) => N.ab(x)).join(", "))],
           [/^No plan found within (\d+) s\./, (m) => T("No plan found within {0} s. Try fewer options or a smaller layout.", m[1])],
           [/^No Aniimo left for production: cap - reserved - haulers is (.+)\.$/, (m) => T("No Aniimo left for production: cap - reserved - haulers is {0}.", m[1])],
           [/^(.+) level (\d+) needs (.+) level \d+: planning with level (\d+)\.$/, (m) => T("{0} level {1} needs {2} level {1}: planning with level {3}.", N.fac(m[1]), m[2], (pt() && pt().modules[m[3]]) || m[3], m[4])],
           [/^(.+) level (\d+) needs RV (\d+)\.$/, (m) => T("{0} level {1} needs RV {2}.", N.fac(m[1]), m[2], m[3])],
+          [/^(.+) level (\d+) needs RV (\d+): planning with level (\d+)\.$/, (m) => T("{0} level {1} needs RV {2}: planning with level {3}.", D.facilities[m[1]] ? N.fac(m[1]) : N.mod(m[1]), m[2], m[3], m[4])],
           [/^RV (\d+) allows (\d+) (.+), not (\d+): planning with (\d+)\.$/, (m) => T("RV {0} allows {1} {2}, not {3}: planning with {4}.", m[1], m[2], N.fac(m[3]), m[4], m[5])],
+          [/^(.+) needs (.+) level (\d+): not planned\.$/, (m) => T("{0} needs {1} level {2}: not planned.", N.itemByName(m[1]), N.fac(m[2]), m[3])],
+          [/^RV (\d+) allows (\d+) (.+): (.+) not planned\.$/, (m) => T("RV {0} allows {1} {2}: {3} not planned.", m[1], m[2], N.fac(m[3]), N.itemByName(m[4]))],
           [/^Nothing in your layout can make (.+)\.$/, (m) => T("Nothing in your layout can make {0}.", N.itemByName(m[1]))],
           [/^This layout cannot make the RV (\d+) materials: see Next RV level\.$/, (m) => T("This layout cannot make the RV {0} materials: see Next RV level.", m[1])],
           [/^This layout cannot (.+) with the Aniimo available\./, (m) => T("This layout cannot {0} with the Aniimo available. Lower a target, add facilities, or turn food planning off.",
@@ -311,7 +328,9 @@
           [/^every (.+) is set to another recipe$/, (m) => T("every {0} is set to another recipe", N.fac(m[1]))],
         ];
         for (const [re, f] of rules) { const m = re.exec(s); if (m) return f(m); }
-        return s;
+        // a whole sentence with nothing inside it needs no rule, only its dictionary entry (the bench-sharing
+        // warning had neither and stayed English; cross-model audit 2026-10-02)
+        return T(s);
       },
     };
     return N;

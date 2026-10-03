@@ -227,11 +227,6 @@
       <section class="panel" id="devicesPanel"><h2>Environment devices to place</h2><table><tbody id="devicesOut"></tbody></table></section>
       <section class="panel" id="powerPanel"><h2>Power</h2><table><tbody id="powerOut"></tbody></table></section>
       <section class="panel adv"><h2>Sell per hour</h2><table><tbody id="sold"></tbody></table></section>
-      <section class="panel adv" style="grid-column: 1 / -1"><h2>Aniimo you need</h2><table class="sortable"><thead><tr><th data-type="text">Job</th><th class="num" data-type="num">Full time</th>
-        <th data-type="num">Aniimo that can do it</th></tr></thead><tbody id="abilities"></tbody></table>
-        <div class="hint adv">Full-time workers per job type, and the Aniimo that can do it (best level first; a level above
-          the requirement is much faster on many benches). The letter is the personality that gives +20% on that bench.
-          Crop work (planting, watering, harvest) is shared by the rest of your Aniimo.</div></section>
       <section class="panel" style="grid-column: 1 / -1"><h2><span class="adv">Suggested roster</span><span class="simple-only">Minimum roster</span></h2>
         <div class="hint adv">The fewest Aniimo that cover all the work. Full-time jobs get their own Aniimo; part-time jobs are
           grouped on Aniimo that can do several of them. <b>Ideal personality</b>: the letters that give +20% on its benches
@@ -315,6 +310,69 @@
     disabledRecipes: [],
   };
 
+  // Every setup that comes in (a file the player imports, or what this browser saved earlier) is rebuilt
+  // from an allow-list before the page uses or saves it: known facility, module, note, Aniimo and recipe
+  // names only, whole numbers in range, true/false for the ticks. A field that is present but the wrong
+  // type makes the whole file "not a setup", so nothing half-read replaces a working setup; a field that
+  // is missing (an older file) takes the default. Cross-model audit 2026-10-02: a facility count of
+  // '"><img onerror=...>' reached innerHTML and ran on every visit, and {"modules": null} was saved before
+  // the page crashed on it, wiping the setup the player had.
+  function readSetup(s) {
+    const obj = (v) => v != null && typeof v === "object" && !Array.isArray(v);
+    const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+    if (!obj(s) || !obj(s.facilities)) return null;
+    const num = (v) => (typeof v === "number" || (typeof v === "string" && v.trim() !== "")) && Number.isFinite(Number(v)) ? Number(v) : NaN;
+    const out = clone(DEFAULT);
+    const bad = [];
+    const take = (k, read) => { if (!own(s, k) || s[k] === undefined) return; const v = read(s[k]); if (v === undefined) bad.push(k); else out[k] = v; };
+    const whole = (lo, hi) => (v) => { const n = num(v); return Number.isFinite(n) ? Math.min(hi, Math.max(lo, Math.round(n))) : undefined; };
+    // "" is what a cleared number box saves (bindNumber); the planner reads it as the default. Rejecting it threw
+    // the whole saved setup away on the next visit (Fable, pre-release audit), so a blank stays blank.
+    const nonNeg = (v) => { if (v === "") return ""; const n = num(v); return Number.isFinite(n) ? Math.max(0, n) : undefined; };
+    const bool = (v) => (typeof v === "boolean" ? v : undefined);
+    // a list of the wrong TYPE rejects the file; a name this game build does not know is dropped (a renamed species
+    // after a data update would otherwise wipe every setup that lists it; Fable, pre-release audit)
+    const listOf = (ok) => (v) => (Array.isArray(v) && v.every((x) => typeof x === "string" || typeof x === "number") ? v.filter(ok) : undefined);
+    const mapOf = (okKey) => (v) => { if (!obj(v)) return undefined; const m = {}; for (const [k, x] of Object.entries(v)) { if (!okKey(k)) continue; const n = num(x); if (x === "" ) m[k] = ""; else if (Number.isFinite(n)) m[k] = n; else return undefined; } return m; };
+    take("rv", whole(1, 20));
+    for (const k of ["cap", "reserved", "haulers", "minFoodPerItem", "cropOpOverhead"]) take(k, nonNeg);
+    take("workerMaxLevel", (v) => (v === "" ? "" : whole(1, 4)(v)));
+    take("homeAniimo", (v) => (v === "" || v === null ? "" : nonNeg(v)));
+    for (const k of ["personality", "power", "watered", "feed", "eventSeeds", "oneRecipePerBench", "moonrayWheat", "devices", "bestPrismana", "fastRv"]) take(k, bool);
+    const facs = {};
+    for (const [n, f] of Object.entries(s.facilities)) {
+      if (!own(D.facilities, n)) continue;           // a facility this game build does not have
+      if (!obj(f)) { bad.push("facilities"); break; }
+      const count = whole(0, 999)(f.count), level = whole(1, D.facilities[n].levels.length)(f.level === undefined ? 1 : f.level);
+      if (count === undefined || level === undefined) { bad.push("facilities"); break; }
+      facs[n] = { count, level };
+    }
+    out.facilities = facs;
+    take("modules", (v) => { if (!obj(v)) return undefined; const m = {}; for (const [k, x] of Object.entries(v)) { if (!own(D.modules, k)) continue; const n = whole(0, D.modules[k].length)(x); if (n === undefined) return undefined; m[k] = n; } return m; });
+    const aniimoNames = new Set((D.aniimo || []).map((a) => a.n));
+    // "all" is the engine's own "every note" shortcut (planner.js available()); a file may carry it (Gemini Flash r3)
+    take("notes", listOf((x) => x === "all" || D.notes.includes(x)));
+    take("unreleased", listOf((x) => aniimoNames.has(x)));
+    take("dedicated", listOf((x) => own(D.facilities, x)));
+    take("aniipods", listOf((x) => Number.isFinite(Number(x))));
+    take("disabledRecipes", listOf((x) => Number.isFinite(Number(x))));
+    take("keep", mapOf((k) => Number.isFinite(Number(k))));
+    take("values", mapOf((k) => Number.isFinite(Number(k))));
+    // two shapes in the wild: the old flat {Farmland: 16, Woodland: 4} (the user's saved setups) and the
+    // per-device {"Heat Furnace": {Farmland, Woodland}} the coverage table writes now
+    const plotMap = mapOf((k) => k === "Farmland" || k === "Woodland");
+    take("deviceCoverage", (v) => { if (!obj(v)) return undefined; const m = {};
+      for (const [k, x] of Object.entries(v)) {
+        if (k === "Farmland" || k === "Woodland") { const n = num(x); if (!Number.isFinite(n)) return undefined; m[k] = n; }
+        else if (own(D.facilities, k)) { const sub = plotMap(x); if (sub === undefined) return undefined; m[k] = sub; }
+      }
+      return m; });
+    take("rvGoal", (v) => (obj(v) ? { level: v.level === "" || v.level == null ? "" : whole(1, 20)(v.level) } : undefined));
+    if (out.rvGoal && out.rvGoal.level === undefined) bad.push("rvGoal");
+    take("sort", (v) => (obj(v) && typeof v.key === "string" && /^[a-z]+$/.test(v.key) && (v.dir === 1 || v.dir === -1) ? { key: v.key, dir: v.dir } : undefined));
+    return bad.length ? null : out;
+  }
+
   // Simple or Advanced, remembered per browser (user, 2026-10-02: simple by default, a click on Advanced
   // opens Advanced next time). Both modes plan the SAME setup; simple mode only shows less (user: "click on
   // simple to see a simple interface but their config set").
@@ -333,10 +391,13 @@
   let S = load();
 
   function load() {
-    try { const s = JSON.parse(localStorage.getItem(STORE)); if (s && s.facilities) return Object.assign(clone(DEFAULT), s); } catch (e) { /* private window */ }
+    // through readSetup like an imported file: a setup saved before this check existed may hold anything
+    try { const s = readSetup(JSON.parse(localStorage.getItem(STORE))); if (s) return s; } catch (e) { /* private window */ }
     firstVisit = true;
     return clone(DEFAULT);
   }
+  // Every RV starts with DEFAULT's 2 haulers. RV 2 had 1 for a while because the greedy roster said 7 Aniimo for
+  // its 6 places; the exact roster fits 6 (cross-model audit round 3), so the exception went (user, 2026-10-02).
   function fresh() { S = clone(DEFAULT); S.rv = 5; S.reserved = 0; S.rvGoal = { level: "" }; S.sort = { key: "coin", dir: -1 }; fillToMax(); }
   function save() { try { localStorage.setItem(STORE, JSON.stringify(S)); } catch (e) { /* ignore */ } }
   function clone(o) { return JSON.parse(JSON.stringify(o)); }
@@ -389,7 +450,8 @@
         return `<tr class="muted"><td>${facIco(n)}${N.fac(n)}</td><td class="num" colspan="2">${T("unlocks at RV {0}", need)}</td></tr>`;
       }
       const opts = D.facilities[n].levels.filter((l) => l.lv <= maxLv)
-        .map((l) => `<option value="${l.lv}" ${l.lv === f.level ? "selected" : ""}>${l.lv}</option>`).join("");
+        // a saved level above the RV's top shows that top, which is what the plan uses (it showed 1; Gemini Flash)
+        .map((l) => `<option value="${l.lv}" ${l.lv === Math.min(f.level, maxLv) ? "selected" : ""}>${l.lv}</option>`).join("");
       const tooMany = maxCount != null && f.count > maxCount;
       return `<tr><td>${facIco(n)}${N.fac(n)}</td>
         <td class="num"><input type="number" min="0" ${maxCount != null ? `max="${maxCount}"` : ""} data-fac="${n}" data-k="count" value="${f.count || 0}"
@@ -481,7 +543,13 @@
 
   // Next RV: what the upgrade asks, the recipe chain down to raw material, and (with days) the plan
   // making it. Level "" = the one after your RV.
-  const goalLevel = () => Number(S.rvGoal && S.rvGoal.level) || Math.min(20, Number(S.rv) + 1);
+  // the RV to plan the upgrade for: the one picked, else the next; null at the last level. It used to give
+  // 20 at RV 20, so the page offered "Upgrade to RV 20" and "fastest upgrade" planned one already done.
+  const goalLevel = () => {
+    const picked = Number(S.rvGoal && S.rvGoal.level), rv = Number(S.rv);
+    if (picked > rv) return picked;
+    return D.rvLevels && D.rvLevels[rv + 1] ? rv + 1 : null;
+  };
   function renderRvGoal() {
     S.rvGoal = S.rvGoal || { level: "" };
     const sel = $("rvGoalLevel");
@@ -600,13 +668,12 @@
     e.target.value = "";                           // the same file can be picked again
     f.text().then((t) => {
       let s = null;
-      try { s = JSON.parse(t); } catch (err) { /* not JSON */ }
-      const obj = (v) => v && typeof v === "object" && !Array.isArray(v);
-      if (!obj(s) || !obj(s.facilities)) {
+      try { s = readSetup(JSON.parse(t)); } catch (err) { /* not JSON */ }
+      if (!s) {
         $("warnings").insertAdjacentHTML("afterbegin", `<div class="warn">${T("That file is not a setup file.")}</div>`);
         return;
       }
-      S = Object.assign(clone(DEFAULT), s); renderAll();
+      S = s; renderAll();
     });
   };
   $("reset").onclick = () => { fresh(); renderAll(); };
@@ -615,12 +682,57 @@
   let timer = null;
   // HiGHS loads once (~3.5 MB of WebAssembly); plans wait for it, and fall back to the built-in
   // solver if it cannot load
+  // A failed WebAssembly.instantiate happens inside the instantiateWasm callback, where nothing awaited it:
+  // the Module promise then never settled and every plan waited forever on "…" (cross-model audit
+  // 2026-10-02). Its rejection now rejects this promise, which lands in the built-in-solver catch below.
   const solverReady = (window.Module && window.HIGHS_WASM_B64
-    ? Promise.resolve().then(() => {
+    ? new Promise((resolve, reject) => {
         const bin = Uint8Array.from(atob(window.HIGHS_WASM_B64), (c) => c.charCodeAt(0));
-        return window.Module({ instantiateWasm: (imports, done) => { WebAssembly.instantiate(bin, imports).then((r) => done(r.instance)); return {}; } });
+        Promise.resolve(window.Module({ instantiateWasm: (imports, done) => {
+          WebAssembly.instantiate(bin, imports).then((r) => done(r.instance), reject); return {}; } })).then(resolve, reject);
       }).then((h) => P.useSolver(h))
     : Promise.resolve()).catch(() => P.useSolver(null));
+
+  // Plans and best cases are solved in planner-worker.js, so the tab never stops answering (user, 2026-10-02; RV 20
+  // held it 11.8 s + 6 s). A Worker cannot start from file:// (or may fail to load): then the page solves on its
+  // own thread as before, with its 4 s limit. A new request cancels the old ones: the worker is restarted rather
+  // than left to finish a plan nobody will look at.
+  let worker = null, seq = 0;
+  const pending = new Map();
+  window.__solverWhere = "page";
+  const onPage = (kind, inputs, prismana) => solverReady.then(() => new Promise((resolve) => setTimeout(resolve, 0)))
+    .then(() => (kind === "best" ? P.bestCase(D, inputs, prismana) : P.plan(D, inputs)));
+  function startWorker() {
+    try {
+      const w = new Worker("planner-worker.js");
+      w.onmessage = (e) => {
+        const job = pending.get(e.data.id);
+        if (!job) return;
+        pending.delete(e.data.id);
+        if (e.data.ok) job.resolve(e.data.result); else job.reject(new Error(e.data.error));
+      };
+      w.onerror = (e) => {                         // could not load or crashed: finish everything on the page
+        if (e && e.preventDefault) e.preventDefault();
+        w.terminate(); if (worker === w) { worker = null; window.__solverWhere = "page"; }
+        for (const [id, job] of pending) { pending.delete(id); onPage(job.kind, job.inputs, job.prismana).then(job.resolve, job.reject); }
+      };
+      worker = w; window.__solverWhere = "worker";
+    } catch (e) { worker = null; window.__solverWhere = "page"; }
+  }
+  startWorker();
+  function solve(kind, inputs, prismana) {
+    if (!worker) return onPage(kind, inputs, prismana);
+    return new Promise((resolve, reject) => {
+      const id = ++seq;
+      pending.set(id, { resolve, reject, kind, inputs, prismana });
+      worker.postMessage({ id, kind, inputs, prismana });
+    });
+  }
+  function cancelSolves() {
+    if (!worker || !pending.size) return;
+    worker.terminate(); pending.clear(); startWorker();
+  }
+  let runToken = 0;
   function recalc() { save(); clearTimeout(timer); timer = setTimeout(() => solverReady.then(run), 80); }
 
   function run() {
@@ -642,15 +754,21 @@
     // the ticked items: the planner sets aside what their facility takes at full speed
     inp.byHand = pods;
     const t0 = performance.now();
-    const p = P.plan(D, inp);
+    const token = ++runToken;
+    cancelSolves();
+    $("subline").textContent = T("Planning…");
+    solve("plan", inp).then((p) => { if (token === runToken) show(inp, p, performance.now() - t0); },
+      (err) => { if (token === runToken) { $("headline").textContent = T("No plan"); $("subline").textContent = String(err && err.message || err); } });
+  }
+
+  function show(inp, p, ms) {
     lastInputs = inp;
-    const ms = performance.now() - t0;
 
     $("warnings").innerHTML = (p.warnings || []).map((w) => `<div class="warn">${N.msg(w)}</div>`).join("");
     if (p.status !== "optimal") {
       $("headline").textContent = T("No plan");
       $("subline").textContent = T(p.status);
-      for (const id of ["lines", "sold", "eaten", "bought", "abilities", "devicesOut", "powerOut", "roster", "best", "planTotal", "byHand"]) $(id).innerHTML = "";
+      for (const id of ["lines", "sold", "eaten", "bought", "devicesOut", "powerOut", "roster", "best", "planTotal", "byHand"]) $(id).innerHTML = "";
       $("devicesPanel").classList.add("nothing"); $("powerPanel").classList.add("nothing");
       // the headline is hidden in simple mode: the same words go above the warnings there (Fable review #1)
       $("warnings").insertAdjacentHTML("afterbegin", `<div class="warn simple-only"><b>${T("No plan")}</b> · ${T(p.status)}</div>`);
@@ -660,7 +778,7 @@
     }
     $("headline").textContent = T("{0} Home Coin / hour", fmt(p.coinPerHour));
     $("subline").textContent = T("{0} per day · solved in {1} ms ({2})", fmt(p.coinPerDay), fmt(ms), T(P.solverName()));
-    if (p.capped) $("subline").textContent += T(" · best found in {0} s", P.solverTimeLimit());
+    if (p.capped) $("subline").textContent += T(" · best found in {0} s", p.timeLimit || P.solverTimeLimit());
 
     const u = p.aniimo.used, pool = Math.max(p.aniimo.pool, 0.0001);
     const seg = (v, c) => `<span style="width:${Math.min(100, v / pool * 100)}%;background:${c}"></span>`;
@@ -712,7 +830,7 @@
     for (const l of eL) { const k = l.facility + "|" + recipeOf(l.recipeId).out[0][0]; machines.set(k, (machines.get(k) || 0) + l.benches); }
     for (const h of p.byHand || []) if (h.mode === "E-mode") { const k = h.facility + "|" + recipeOf(h.recipeId).out[0][0]; machines.set(k, (machines.get(k) || 0) + 1); }
     $("powerOut").innerHTML = !pw ? `<tr><td class="muted">${S.power === false ? T("turned off")
-        : p.powerNote ? T("Power did not give a better plan within {0} s: this is the plan without it.", P.solverTimeLimit())
+        : p.powerNote ? T("Power did not give a better plan within {0} s: this is the plan without it.", p.timeLimit || P.solverTimeLimit())
         : T("no generator yet (Power Module, RV 12)")}</td></tr>`
       : !pw.generators ? `<tr><td class="muted">${T("none worth placing")}</td></tr>`
       : `<tr><td>${facIco(D.power.generatorFacility, true)}<b>${T("{0} {1} level {2}", pw.generators, N.fac(D.power.generatorFacility), pw.level)}</b>
@@ -753,7 +871,8 @@
   const busyPct = (v) => (v > 0 && v < 0.01 ? "<1%" : fmt(v * 100) + "%");
   function renderLines() {
     S.sort = S.sort || { key: "coin", dir: -1 };   // a Reset or an old setup file has none
-    const get = SORT_KEYS[S.sort.key] || SORT_KEYS.coin;
+    // own keys only: an inherited name like "valueOf" is a function too, and threw on every render (audit)
+    const get = Object.prototype.hasOwnProperty.call(SORT_KEYS, S.sort.key) ? SORT_KEYS[S.sort.key] : SORT_KEYS.coin;
     const rows = lastLines.slice().sort((a, b) => {
       const x = get(a), y = get(b);
       return (typeof x === "string" ? x.localeCompare(y) : x - y) * S.sort.dir;
@@ -830,14 +949,9 @@
     // "+N more" opens in place (user: it did nothing before)
     const moreList = (parts, n, sep) => parts.length <= n ? parts.join(sep)
       : parts.slice(0, n).join(sep) + `<details class="more"><summary>${T("+{0} more", parts.length - n)}</summary>${parts.slice(n).join(sep)}</details>`;
-    const who = (worker) => {
-      const j = P.parseJob(D, worker);
-      if (!j) return "";
-      const list = P.candidates(pool(), j.ab, j.lv, S.bestPrismana, j.fam);
-      return moreList(list.map((a) => aniName(a).replace(/<\/span>$/, ` <b>${a.ab[j.ab]}</b></span>`)), 10, ", ");
-    };
     const altHtml = (m, res) => {
-      const alts = P.alternatives(pool(), m, !!S.bestPrismana, res && res.abilityLevels, res && res.familyLevels);
+      const alts = P.alternatives(pool(), m, !!S.bestPrismana, res && res.abilityLevels, res && res.familyLevels,
+          res && !res.abilityLevels && res.inputs ? res.inputs.workerMaxLevel : null);
       if (!alts.length) return `<span class="muted">${T("none: only this Aniimo does all these jobs")}</span>`;
       const jobsAb = [...new Set(m.jobs.map((j) => j.job.split(" ")[0]))];
       return moreList(alts.map((a) => `${aniName(a)} <span class="muted">${jobsAb.map((ab) => N.ab(ab) + " " + (a.ab[ab] || 0)).join(", ")}
@@ -857,12 +971,15 @@
       for (const h of res.byHand || []) add(h.worker, h.facility);   // E-mode ones have no worker
       return Object.fromEntries(Object.entries(w).map(([k, v]) => [k, [...v]]));
     };
-    const rosterHtml = (res, title) => {
-      const R = P.roster(pool(), res, !!S.bestPrismana);
+    // R: a roster already made (the ideal one); else the minimum roster of res
+    const rosterHtml = (res, title, R) => {
+      R = R || P.roster(pool(), res, !!S.bestPrismana);
       const rows = R.members.map((m) => {
         const ip = P.idealPersonality(res, m);
-        const alts = P.alternatives(pool(), m, !!S.bestPrismana, res && res.abilityLevels, res && res.familyLevels);
-        const work = m.jobs.reduce((acc, j) => acc + j.load, 0);
+        const alts = P.alternatives(pool(), m, !!S.bestPrismana, res && res.abilityLevels, res && res.familyLevels,
+          res && !res.abilityLevels && res.inputs ? res.inputs.workerMaxLevel : null);
+        // share of its own day at its real speed (time); a roster from before real speed had only load
+        const work = m.jobs.reduce((acc, j) => acc + (j.time != null ? j.time : j.load), 0);
         // the facilities its jobs run on (the job names mean nothing without the Worker column); a job found
         // nowhere keeps its name rather than an empty cell
         const where = jobFacilities(res);
@@ -872,22 +989,32 @@
           <div class="muted" style="font-size:12px">${N.form(m.aniimo.form, m.aniimo.fn || "Basic Form")}</div></td>
           <td class="simple-only">${facCell}</td>
           <td class="muted adv" data-v="${Object.keys(m.aniimo.ab).length * 100 + Object.values(m.aniimo.ab).reduce((a, b) => a + b, 0)}">${abTitle(m.aniimo)}</td>
-          <td class="adv" data-v="${work * m.count}">${m.jobs.map((j) => N.job(j.job) + (m.count === 1 && j.load < 0.995 ? " (" + fmt(j.load * 100) + "%)" : "")).join(" · ")}</td>
+          <td class="adv" data-v="${work}">${m.jobs.map((j) => { const t = j.time != null ? j.time : j.load; return N.job(j.job) + (m.count === 1 && t < 0.995 ? " (" + fmt(t * 100) + "%)" : ""); }).join(" · ")}</td>
           <td class="adv" data-v="${ip.share}">${!Object.keys(ip.help).length ? `<span class="muted">${T("any (no bench bonus for these jobs)")}</span>`
             : `<b style="letter-spacing:.08em">${ip.code}</b><div class="muted" style="font-size:12px">${Object.entries(ip.help).map(([k, f]) => k + ": " + f.map(N.fac).join(", ")).join(" · ")}
               · ${T("+20% on {0}% of its work", fmt(ip.share * 100))}</div>`}</td>
           <td class="adv" style="font-size:12px" data-v="${alts.length}">${altHtml(m, res)}</td></tr>`;
       }).join("");
-      return `<div class="hint adv" style="margin-top:6px"><b>${T("{0}: {1} Aniimo.", title || T("Suggested roster"), R.total)}</b> ${T("Click a column to sort.")}</div>
+      // the ideal roster (it has `relaxed`) fits the home by design and says in plain words what that cost
+      // (user, 2026-10-02: "give a heads up in simple and direct language"); the minimum roster warns when over
+      const ideal = R.relaxed != null;
+      const over = ideal
+        ? (R.over > 0 && R.total > Number((res.inputs || {}).cap)
+            // nothing left to lower and still over the home: hauler places cannot cover it (Fable, pre-release audit)
+            ? `<div class="warn">${T("The best roster needs {0} Aniimo but your home has {1} places.", R.total, Number(res.inputs.cap))}</div>`
+          : R.over > 0 ? `<div class="warn">${Number((res.inputs || {}).reserved) > 0
+            // with reserved Aniimo some of those places are not hauler places (Gemini Flash, final re-audit)
+            ? T("The best roster needs {0} Aniimo but only {1} are free for work: it uses {2} of the places you keep for haulers and reserved Aniimo.", R.total, R.slots, R.over)
+            : T("The best roster needs {0} Aniimo but only {1} are free for work: it uses {2} of your hauler places.", R.total, R.slots, R.over)}</div>` : "")
+          + (R.relaxed.length ? `<div class="warn">${T("To fit your home, these jobs use a lower level: {0}.", R.relaxed.map((x) => N.job(x)).join(", "))}</div>` : "")
+        : R.over > 0 ? `<div class="warn">${T("This roster needs {0} Aniimo; you have {1} for production.", R.total, R.slots)}</div>` : "";
+      return over + `<div class="hint adv" style="margin-top:6px"><b>${T("{0}: {1} Aniimo.", title || T("Suggested roster"), R.total)}</b> ${T("Click a column to sort.")}</div>
         <table class="sortable"><thead><tr><th data-type="text">${T("Aniimo")}</th><th class="simple-only" data-type="text">${T("Put it on")}</th>
         <th class="adv" data-type="num">${T("Jobs it can do")}</th><th class="adv" data-type="num">${T("Works on")}</th>
         <th class="adv" data-type="num">${T("Ideal personality")}</th><th class="adv" data-type="num">${T("Alternatives")}</th></tr></thead><tbody>${rows}</tbody></table>`
         + (R.uncovered.length ? `<div class="warn">${T("No Aniimo can do: {0}", R.uncovered.map(N.job).join(", "))}</div>` : "");
     };
     window.__rosterHtml = rosterHtml;
-    $("abilities").innerHTML = Object.entries(p.abilityNeeds).sort((a, b) => b[1] - a[1])
-      .map(([k, v]) => `<tr><td style="white-space:nowrap" data-v="${N.job(k)}"><b>${N.job(k)}</b></td><td class="num" data-v="${v}">${Math.ceil(v - 1e-6)}</td>
-        <td data-v="${((j) => j ? P.candidates(pool(), j.ab, j.lv, S.bestPrismana, j.fam).length : 0)(P.parseJob(D, k))}">${who(k)}<div class="muted" style="font-size:12px">${lettersFor(k)}</div></td></tr>`).join("");
     $("roster").innerHTML = rosterHtml(p);
     // the best case is a second plan: show this one first, then work it out
     $("best").innerHTML = `<div class="muted">…</div>`;
@@ -898,23 +1025,23 @@
   let lastInputs = null;
   function renderBest(current) {
     if (!lastInputs) return;
-    const b = P.bestCase(D, lastInputs, !!S.bestPrismana);
+    const token = runToken;
+    $("best").innerHTML = `<div class="muted">${T("Planning…")}</div>`;
+    solve("best", lastInputs, !!S.bestPrismana).then((b) => { if (token === runToken) showBest(current, b); },
+      // a best case that fails in the Worker left "Planning…" up until the next change (Fable, pre-release audit)
+      (err) => { if (token === runToken) $("best").innerHTML = `<div class="muted">${T("No best-case plan: {0}", T("error"))}</div>`; });
+  }
+  function showBest(current, b) {
     if (b.status !== "optimal") { $("best").innerHTML = `<div class="muted">${T("No best-case plan: {0}", T(b.status))}</div>`; return; }
     const gain = b.coinPerHour - current.coinPerHour;
-    const rows = Object.entries(b.abilityNeeds).sort((x, y) => y[1] - x[1]).map(([k, v]) => {
-      const m = P.parseJob(D, k);
-      const ab = m ? m.ab : k, lv = m ? (m.fam ? b.familyLevels[m.fam] : b.abilityLevels[ab]) : null;
-      const top = m ? P.candidates(pool(), ab, lv, !!S.bestPrismana, m.fam).slice(0, 6)
-        .map((a) => N.ani(a) + (a.prismana ? ' <span class="pill">Prismana</span>' : ' <span class="muted">(' + formLabel(a) + ")</span>")).join(", ") : "";
-      return `<tr><td style="white-space:nowrap"><b>${N.job(k)}</b></td><td class="num">${Math.ceil(v - 1e-6)}</td>
-        <td>${T("level {0}", "<b>" + (lv ?? "-") + "</b>")}: ${top}</td></tr>`;
-    }).join("");
+    // The roster here is the best Aniimo for the plan SHOWN (idealRoster): the best-case plan re-plans, and from
+    // RV 12 up it drops the generators the shown plan places (cross-model audit 2026-10-02). Only the coin line
+    // comes from that re-plan. The job-by-job list of every Aniimo that could do it is gone (user: too much text).
+    const ideal = P.idealRoster(pool(), current, !!S.bestPrismana);
     $("best").innerHTML = `<div class="adv"><div class="row"><span>${T("{0} Home Coin / hour with the best Aniimo", "<b>" + fmt(b.coinPerHour) + "</b>")}
         ${T("({0} / day)", fmt(b.coinPerDay))}</span><span class="${gain > 0 ? "" : "muted"}">${T("{0} / hour vs your current plan", (gain >= 0 ? "+" : "") + fmt(gain))}</span></div>
-      <div class="hint">${T("Same facilities, RV and options; every job gets the highest ability level that exists {0}, with a matching personality.",
-        S.bestPrismana ? T("(Prismana forms included)") : T("(without Prismana forms)"))}</div>
-      ${b.capped ? `<div class="hint">${T(" · best found in {0} s", P.solverTimeLimit()).replace(/^ · /, "")}</div>` : ""}
-      <table><tbody>${rows}</tbody></table></div>` + window.__rosterHtml(b, T("Best-case roster"));
+      ${b.capped ? `<div class="hint">${T(" · best found in {0} s", b.timeLimit || P.solverTimeLimit()).replace(/^ · /, "")}</div>` : ""}</div>`
+      + window.__rosterHtml(ideal.basis, T("Best-case roster"), ideal);
   }
 
   function renderAll() {

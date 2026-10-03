@@ -44,6 +44,14 @@
     return formula === 3013 ? base * (1 + 0.2 * m) : base * (match ? 1.2 : 1);
   }
 
+  // The +20% personality bonus exists only on a facility that has an MBTI letter: the game's
+  // Utils.getHomePetFitPersonality returns 0 (no match) when the facility's mbti is nil, whatever the
+  // Aniimo's talents. Farmland, Woodland, the Crackle Generator, the by-hand makers and the devices have
+  // none, so "personality" never speeds them up (cross-model audit 2026-10-02, checked in the decompiled
+  // Common/Utils/Utils.lua of build 3634150; the planner used to give crops and generators +20%).
+  const scaleSpeed = (sp, x) => ({ parts: sp.parts.map((q) => Object.assign({}, q, { h: q.h * x })), fixed: sp.fixed * x });
+  const personalityFits = (D, inp, fac) => !!(inp.personality && D.facilities[fac] && D.facilities[fac].mbti);
+
   const WATERING = { ab: "Water", lv: 1, f: 3013, wl: 6 };
 
   // Pen facilities take one evolution family only (recipe `fam`, from the recipe's `pet`; user confirmed
@@ -63,7 +71,7 @@
   // make (Wood Block: every Woodland crop; Mineral Sand: the Mines); that is the raw material.
   function rvChain(D, level) {
     const L = (D.rvLevels || {})[level];
-    if (!L) return null;
+    if (!L || !Array.isArray(L.mats)) return null;   // RV 1 is in the table with no cost (mats null)
     const makers = (i) => D.recipes.filter((r) => r.out.some(([o]) => o === i));
     const steps = [], raw = new Map();
     const expand = (i, qty, depth) => {
@@ -108,11 +116,16 @@
     for (const l of result.lines) if (l.kind !== "crop") taken[l.facility] = (taken[l.facility] || 0) + (l.benches != null ? l.benches : Math.ceil(l.count - 1e-6));
     const mats = [];
     for (const st of c.steps) { if (st.depth === 0) mats.push({ item: st.item, need: st.qty, stages: [] }); mats[mats.length - 1].stages.push(st); }
+    // a material with no crafting chain (Mineral Sand, Wood Block: gathered, not crafted) has no steps, so it
+    // never got a row above and the estimate said "ready" from coins alone (cross-model audit 2026-10-02:
+    // RV 5 with no Mine, RV 6 needs 700 Mineral Sand). It is its own raw input.
+    for (const [i, n] of c.mats) if (!mats.some((m) => m.item === i)) mats.push({ item: i, need: n, stages: [] });
     for (const m of mats) {
       m.blocked = [];
       const made = new Set(m.stages.map((st) => st.item));
       m.raw = [];
-      for (const st of m.stages) for (const [i, q] of st.inputs) if (!made.has(i)) {
+      const inputs = m.stages.length ? m.stages.flatMap((st) => st.inputs) : [[m.item, m.need]];
+      for (const [i, q] of inputs) if (!made.has(i)) {
         const perHour = Math.max(0, net.get(i) || 0);
         m.raw.push({ item: i, need: q, perHour, hours: perHour > 1e-9 ? q / perHour : Infinity });
         if (!(perHour > 1e-9)) m.blocked.push("the plan makes no spare " + (D.items[i] ? D.items[i].n : i));
@@ -121,7 +134,10 @@
       for (const st of m.stages) {
         const r = D.recipes.find((x) => x.id === st.recipeId);
         const op = mainOp(r);
-        const rate = op ? workPerMinute(op.lv, Math.max(op.lv, best[op.ab] || op.lv), op.f, !!inp.personality) : 60;
+        // unfed Aniimo work at noFoodRatio, here as in the plan's columns (it timed stages fed even with feed off:
+        // 5x too fast; ChatGPT, cross-model round 2)
+        const fed = inp.feed !== false ? 1 : (D.noFoodRatio != null ? D.noFoodRatio : 0.2);
+        const rate = (op ? workPerMinute(op.lv, Math.max(op.lv, best[op.ab] || op.lv), op.f, personalityFits(D, inp, st.fac[0])) : 60) * fed;
         st.hours = st.runs * r.wl / rate / 60;
         st.worker = op ? op.ab + " " + (best[op.ab] || op.lv) : null;
         const f = st.fac[0], have = inp.facilities[f];
@@ -214,6 +230,7 @@
   }
 
   function zoneRatio(r, zone) {
+    zone = zone || {};                             // by-hand columns pass none (a crop id ticked by hand threw here; Gemini)
     if (r.light && r.force && !zone.light) return 0;          // forceEnvRequire: cannot grow at all
     if (r.temp == null) return 1;
     return ENV_RATIO[Math.min(Math.abs(r.temp - (zone.temp || 0)), 3)];
@@ -271,14 +288,19 @@
   function available(D, inp, ignoreDisabled) {
     const owned = new Set((inp.notes || []).map((n) => n.toLowerCase()));
     const off = new Set(ignoreDisabled ? [] : (inp.disabledRecipes || []).map(Number));
+    // a level above what the RV allows counts as the RV's top level here too, so the page's recipe list
+    // (recipeChoices) agrees with the plan, which caps it in planOnce (ChatGPT, cross-model audit round 1)
+    const lim = inp.rv != null ? rvLimits(D, inp.rv) : null;
+    const maxLv = lim ? lim.facilities : null;
     const out = [];
     for (const r of D.recipes) {
       if (off.has(r.id)) continue;
       if (r.note && !owned.has("all") && !owned.has(r.note.toLowerCase())) continue;
-      if (r.mod && (inp.modules[r.mod[0]] || 0) < Number(r.mod[1])) continue;
+      if (r.mod && Math.min(inp.modules[r.mod[0]] || 0, lim ? lim.modules[r.mod[0]] || 0 : Infinity) < Number(r.mod[1])) continue;
       for (const [fac, minLv] of r.fac) {
         const have = inp.facilities[fac];
-        if (!have || !(have.count > 0) || (have.level || 0) < minLv) continue;
+        const lv = maxLv ? Math.min(have ? have.level || 0 : 0, maxLv[fac] || 0) : have && have.level || 0;
+        if (!have || !(have.count > 0) || lv < minLv) continue;
         out.push({ r, fac });
       }
     }
@@ -301,7 +323,8 @@
   // The ability level of the Aniimo the plan puts on a job (the page's "Aniimo go up to level N")
   function workerLevel(inp, need, ab) {
     if (inp.abilityLevels && ab && inp.abilityLevels[ab] != null) return Math.max(1, Math.min(4, inp.abilityLevels[ab]));
-    if (inp.workerMaxLevel != null && inp.workerMaxLevel !== "") return Math.max(1, Math.min(4, Number(inp.workerMaxLevel)));
+    const top = inp._skillTop && ab && inp._skillTop[ab] ? inp._skillTop[ab] : 4;
+    if (inp.workerMaxLevel != null && inp.workerMaxLevel !== "") return Math.max(1, Math.min(4, top, Number(inp.workerMaxLevel)));
     if (inp.workerBonus === "max") return 4;
     return Math.min(4, (need || 1) + (Number(inp.workerBonus) || 0));
   }
@@ -325,7 +348,7 @@
     if (!g) return null;
     const fed = inp.feed !== false ? 1 : (D.noFoodRatio != null ? D.noFoodRatio : 0.2);
     // the generator's operations carry no functionId: the default formula (ATK - DEF, x1.2 on a match)
-    const rate = workPerMinute(g.lv, workerLevel(inp, g.lv, g.ab), null, inp.personality) * fed;
+    const rate = workPerMinute(g.lv, workerLevel(inp, g.lv, g.ab), null, personalityFits(D, inp, PW.generatorFacility)) * fed;
     const produce = Math.min(1, rate / g.unitWorkload) * g.produce;
     return produce > 0 ? { lv, count: have.count, produce, worker: g.ab + " " + g.lv + "+" } : null;
   }
@@ -348,17 +371,21 @@
       return Math.max(1, Math.min(general(need, ab), familyBest(D, r.fam, ab, false) || 1));
     };
     const fed = inp.feed !== false ? 1 : (D.noFoodRatio != null ? D.noFoodRatio : 0.2);
-    const opRate = (o) => workPerMinute(o.lv, petLv(o.lv, o.ab), o.f, inp.personality) * fed;
-    let minutes, workerHours, kind, cropJobs = null;
+    const opRate = (o) => workPerMinute(o.lv, petLv(o.lv, o.ab), o.f, personalityFits(D, inp, fac)) * fed;
+    let minutes, workerHours, kind, cropJobs = null, speed = null;
     if (r.k === "production") {
       const ratio = zoneRatio(r, zone);
       if (!(ratio > 0)) return null;
       minutes = (r.t - (inp.watered ? r.wc : 0)) / 60 / ratio;
       const ops = r.ops.filter((o) => o.wl).concat(inp.watered && r.wc ? [WATERING, WATERING] : []);
       cropJobs = {};                               // Aniimo-hours per plot-hour, by job ("Earth 1+")
+      speed = {};                                  // how those hours were timed, for the roster (see roster)
       for (const o of ops) {
         const key = o.ab + " " + o.lv + "+";
         cropJobs[key] = (cropJobs[key] || 0) + (o.wl / opRate(o) + inp.cropOpOverhead) / minutes;
+        const sp = speed[key] = speed[key] || { parts: [], fixed: 0 };
+        sp.parts.push({ h: o.wl / opRate(o) / minutes, need: o.lv, pet: petLv(o.lv, o.ab), f: o.f });
+        sp.fixed += inp.cropOpOverhead / minutes;  // walking between plots: the same at any level
       }
       workerHours = Object.values(cropJobs).reduce((a, b2) => a + b2, 0);
       kind = "crop";
@@ -367,11 +394,12 @@
       const rate = op ? opRate(op) : 60;
       minutes = r.wl / rate;
       workerHours = 1;                             // one Aniimo per running facility (user, in game)
+      if (op) speed = { parts: [{ h: 1, need: op.lv, pet: petLv(op.lv, op.ab), f: op.f }], fixed: 0 };
       kind = dedicated ? "dedicated" : "bench";
     }
     if (!(minutes > 0)) return null;
     const perHour = 60 / minutes;
-    return { r, fac, zone: r.k === "production" ? zone : null, kind, minutes, perHour, workerHours, cropJobs,
+    return { r, fac, zone: r.k === "production" ? zone : null, kind, minutes, perHour, workerHours, cropJobs, speed,
              op: r.k === "production" ? null : mainOp(r) };
   }
 
@@ -536,6 +564,9 @@
   // 4 s cap (measured 2026-09-29 with whole plots): RV 11/12 still exact in ~1.5 s; maxed RV 16 -2.5% and
   // RV 20 -0.4% of the true best; a 1 s cap cost RV 20 about 20%. The plan says when the cap was hit.
   const HIGHS_OPTIONS = { output_flag: false, time_limit: 4, mip_rel_gap: 1e-4 };
+  // the limit actually given: 4 s on the page's own thread, more where the page stays usable (the Worker sets
+  // __highsTimeLimit = 30), so the "best found in N s" the player reads is the real N
+  const timeLimit = () => (typeof globalThis !== "undefined" && globalThis.__highsTimeLimit) || HIGHS_OPTIONS.time_limit;
   function solveHighs(obj, rows, b, ints, ones) {
     const num = (v) => String(+Number(v).toPrecision(15));
     const term = (v, j) => (v < 0 ? " - " : " + ") + num(Math.abs(v)) + " x" + j;
@@ -661,25 +692,53 @@
     const nn = (v, d) => (Number.isFinite(Number(v)) ? Math.max(0, Number(v)) : d);
     inp.cap = nn(inp.cap, 0); inp.reserved = nn(inp.reserved, 0); inp.haulers = nn(inp.haulers, 0);
     inp.cropOpOverhead = nn(inp.cropOpOverhead, 0.5); inp.minFoodPerItem = nn(inp.minFoodPerItem, 0);
+    // empty / null means "every Aniimo in the home eats"; a negative count would make the food need negative
+    if (inp.homeAniimo != null && inp.homeAniimo !== "") inp.homeAniimo = nn(inp.homeAniimo, null);
     if (inp.workerMaxLevel != null && inp.workerMaxLevel !== "") inp.workerMaxLevel = Math.max(1, Math.min(4, Math.round(Number(inp.workerMaxLevel)) || 1));
+    // the best level any Aniimo has per skill, Prismana included: "go up to level 4" is timed at 4 only where
+    // someone has it (only Prismana forms do, and never Light or Perfumery). The plan timed every job at 4 and
+    // the roster could not staff it (ChatGPT, cross-model audit round 2; user: level 4 = Prismana where needed)
+    inp._skillTop = bestAbilityLevels(D, true);
     const warnings = [];
     const pool = inp.cap - inp.reserved - inp.haulers;
     if (pool <= 0) warnings.push("No Aniimo left for production: cap - reserved - haulers is " + pool + ".");
     const limits = rvLimits(D, inp.rv);
     const facilities = {};
-    for (const [name, f] of Object.entries(inp.facilities)) {
+    for (const [name, f0] of Object.entries(inp.facilities)) {
+      let f = f0;
       const fd = D.facilities[name];
+      // a level above anything the game has (setup file, direct call) is first brought to the game's top
+      if (fd && Number(f.level) > fd.levels.length) f = Object.assign({}, f, { level: fd.levels.length });
       const lvl = fd && fd.levels.find((l) => l.lv === f.level);
-      if (lvl && lvl.rv != null && lvl.rv > inp.rv) warnings.push(name + " level " + f.level + " needs RV " + lvl.rv + ".");
+      // a level the RV does not allow yet is planned at the highest one it does, like counts below: the
+      // plan must only use recipes the player can craft now (a setup file or an RV lowered by hand can
+      // carry a higher level; the plan used to keep it and list recipes nobody could make yet)
+      let level = f.level;
+      if (lvl && lvl.rv != null && lvl.rv > inp.rv) {
+        level = Math.max(1, limits.facilities[name] || 1);
+        warnings.push(name + " level " + f.level + " needs RV " + lvl.rv + ": planning with level " + level + ".");
+      }
       const max = limits.counts[name];
       let count = f.count;
       if (max != null && count > max) {
         warnings.push("RV " + inp.rv + " allows " + max + " " + name + ", not " + count + ": planning with " + max + ".");
         count = max;
       }
-      facilities[name] = { count, level: f.level };
+      facilities[name] = { count, level };
     }
     inp.facilities = facilities;
+    // module levels too: a level the RV does not allow unlocked its recipes (RV 7 with Ecological Module 3
+    // planned Quick Potato, 92 Potato/h a plot instead of 15; ChatGPT + Gemini Flash, cross-model round 2)
+    const modules = {};
+    for (const [m, v] of Object.entries(inp.modules || {})) {
+      const max = limits.modules[m] || 0, want = Math.min(Number(v) || 0, (D.modules[m] || []).length);
+      if (want > max) {
+        const row = (D.modules[m] || []).find((l) => l.lv === want);
+        warnings.push(m + " level " + want + " needs RV " + (row ? row.rv : "?") + ": planning with level " + max + ".");
+      }
+      modules[m] = Math.min(want, max);
+    }
+    inp.modules = modules;
 
     const neutral = { name: "No device", temp: 0, light: false };
     const zones = [neutral];
@@ -798,7 +857,29 @@
     // Aniipod Pro, a Potato plot for Growth Bud). The rest of the ingredient is the plan's as usual.
     // History (user, 2026-09-28): first nothing was set aside (Pro had no Clay), then ALL of the ingredient
     // was held back, so ticking Mega could not sell a single Shell and the plan moved 5 Mines to Clay.
-    const handRecipes = (inp.byHand || []).map(Number).map((id) => D.recipes.find((r) => r.id === id)).filter(Boolean)
+    // a ticked item needs its facility at the recipe's level, and one facility makes one item: the page offers
+    // only that, a setup file or a direct call did not (no Maker at all, or two items on RV 6's one Maker;
+    // Gemini Flash + ChatGPT, cross-model round 2)
+    const handUsed = {};
+    const handOk = (r) => {
+      const f = r.fac[0][0];
+      // level as the E-mode code below reads it: byHandLevels (the page takes ticked facilities out of
+      // `facilities`), else the layout, else the RV's top. "Ticked with no Maker at all" is the page's to stop
+      // (it offers items only for facilities you have): the engine cannot tell it from "taken out to tick".
+      const lv = (inp.byHandLevels || {})[f] != null ? Number(inp.byHandLevels[f]) : inp.facilities[f] ? inp.facilities[f].level : limits.facilities[f];
+      if (!(Math.min(Number(lv) || 0, limits.facilities[f] || 0) >= r.fac[0][1])) {
+        warnings.push((D.items[r.out[0][0]] ? D.items[r.out[0][0]].n : r.id) + " needs " + f + " level " + r.fac[0][1] + ": not planned.");
+        return false;
+      }
+      handUsed[f] = (handUsed[f] || 0) + 1;
+      if (handUsed[f] > (limits.counts[f] != null ? limits.counts[f] : 1)) {
+        warnings.push("RV " + inp.rv + " allows " + (limits.counts[f] || 0) + " " + f + ": " + (D.items[r.out[0][0]] ? D.items[r.out[0][0]].n : r.id) + " not planned.");
+        return false;
+      }
+      return true;
+    };
+    // only crafted items can be made by hand: a crop id (setup file, direct call) is not one (Gemini Flash, final)
+    const handRecipes = (inp.byHand || []).map(Number).map((id) => D.recipes.find((r) => r.id === id)).filter((r) => r && r.k !== "production")
       .map((r) => ({ r, c: buildColumn(D, inp, r, r.fac[0][0], null) })).filter((x) => x.c)
       // ... and only if the layout can make its ingredients: Mega ticked at RV 6 (no Mine digs Shell before RV 9)
       // kept a Lightning 3 seat and "set aside 12 Shell/h" next to "Nothing can make Shell" (audit 2026-10-02)
@@ -806,7 +887,8 @@
         const miss = r.in.filter(([i]) => !cols.some((c) => c.r.out.some(([o]) => o === i)));
         for (const [i] of miss) warnings.push("Nothing in your layout can make " + (D.items[i] ? D.items[i].n : i) + ".");
         return !miss.length;
-      });
+      })
+      .filter(({ r }) => handOk(r));               // after the ingredient check, which names what is missing first
     // A ticked facility in E-mode (user, 2026-10-01: "add the Aniipod Maker into the calculation, if it is worth
     // E-power or not"). In E-mode it runs its own 120% timer whenever its ingredients are in storage, so it
     // makes MORE than on its Aniimo and eats that much more (Fable review 2 #1: the first version set aside the
@@ -1076,9 +1158,10 @@
     // HiGHS at its time cap with nothing found: say so. Falling back to the hand-written solver ran a
     // different model and once took 49 s (Fable review 2 #2). Only a missing/broken HiGHS falls back.
     if (res && res.status === "time_limit") {
-      warnings.push("No plan found within " + HIGHS_OPTIONS.time_limit + " s. Try fewer options or a smaller layout.");
+      warnings.push("No plan found within " + timeLimit() + " s. Try fewer options or a smaller layout.");
       return { status: "time_limit", warnings, inputs: inp };
     }
+    const builtIn = !res;                          // HiGHS absent, or it threw mid-solve (solveHighs returns null)
     if (!res) res = whole.length ? solveWhole(obj, rows, b, groups, new Map([...yOf].map(([j, y]) => [y, j])), route) : LP.solve(obj, rows, b);
     if (res.status === "infeasible") {
       const why = [];
@@ -1087,6 +1170,32 @@
       warnings.push("This layout cannot " + (why.join(" and ") || "work") + " with the Aniimo available. Lower a target, add facilities, or turn food planning off.");
     }
     if (res.status !== "optimal") return { status: res.status, warnings, inputs: inp };
+    // Built-in solver only (HiGHS could not load): it leaves plots fractional, and the page then showed whole
+    // plots (wholeCounts) next to coin from the fractions (RV 2: "2 plots", 218 coin/h; 2 plots make 200. ChatGPT,
+    // cross-model round 2; Gemini Flash proposed this fix). So fix every crop column at the whole plots the page
+    // will show and solve the rest again; if that cannot work, at the plots rounded down; else keep the LP's.
+    if (builtIn) {                                 // (it read !HIGHS: a HiGHS that threw skipped this; ChatGPT, final)
+      const crop = cols.map((c, j) => (c.kind === "crop" ? j : -1)).filter((j) => j >= 0);
+      if (crop.some((j) => Math.abs(res.x[j] - Math.round(res.x[j])) > 1e-6)) {
+        const probe = cols.map((c, j) => ({ facility: c.fac, zone: c.zone && c.zone.name !== "No device" ? c.zone.name : null, count: res.x[j], kind: c.kind }));
+        const shown = wholeCounts(probe);
+        const fixAt = (val) => {
+          const R = rows.map((r) => r.slice()), B = b.slice();
+          for (const j of crop) {
+            const v = val(j), lo = new Array(obj.length).fill(0), hi = new Array(obj.length).fill(0);
+            lo[j] = -1; hi[j] = 1; R.push(lo, hi); B.push(-v, v);
+          }
+          return whole.length ? solveWhole(obj, R, B, groups, new Map([...yOf].map(([j, y]) => [y, j])), route) : LP.solve(obj, R, B);
+        };
+        let fixed = fixAt((j) => shown.get(probe[j]) || 0);
+        if (!fixed || fixed.status !== "optimal") fixed = fixAt((j) => Math.floor(res.x[j] + 1e-9));
+        if (fixed && fixed.status === "optimal") res = fixed;
+        else {                                     // no whole-plot plan: say so, never show fractions as plots (ChatGPT, r3)
+          warnings.push("No plan with whole plots fits these Aniimo.");
+          return { status: "infeasible", warnings, inputs: inp };
+        }
+      }
+    }
 
     const name = (i) => (D.items[i] ? D.items[i].n : String(i));
     const lines = [];
@@ -1109,6 +1218,8 @@
         lineValue: (valueOut - valueIn) * c.perHour * x,       // same convention as the site's lines
         aniimo: c.workerHours * x,
         cropJobs: c.cropJobs ? Object.fromEntries(Object.entries(c.cropJobs).map(([k, v]) => [k, v * x])) : null,
+        speed: c.speed && (c.cropJobs ? Object.fromEntries(Object.entries(c.speed).map(([k, sp]) => [k, scaleSpeed(sp, x)]))
+          : scaleSpeed(c.speed, x)),
         worker: c.kind === "electric" ? "E-mode" : c.op ? jobName(D, c.op.ab, c.op.lv, c.r.fam) : c.r.ops.filter((o) => o.wl).map((o) => o.ab + " " + o.lv + "+").join(", ") + (inp.watered && c.r.wc ? ", Water 1+ (watering)" : ""),
         note: c.r.note || null,
       });
@@ -1148,21 +1259,38 @@
     for (const l of lines) used[l.kind] += l.aniimo;
     const abilityNeeds = {};                       // job -> Aniimo-hours per hour (1 = one Aniimo full time)
     const fullTime = {};                           // part of that which is one indivisible full-time seat
+    // job -> how its hours were timed: { parts: [{ h, need, pet, f }], fixed }. The plan times every job at
+    // the assumed level (pet); the roster rescales the parts for the Aniimo it actually picks. Seats (devices,
+    // generators, by-hand makers) are fixed: a slower Aniimo there makes less, it does not take longer.
+    const abilitySpeed = {};
+    const addSpeed = (job, sp) => { const t = abilitySpeed[job] = abilitySpeed[job] || { parts: [], fixed: 0, seat: 0 };
+      if (sp) { t.parts.push(...sp.parts); t.fixed += sp.fixed; } };
+    const addFixed = (job, h) => { addSpeed(job, { parts: [], fixed: h }); };
+    // seats are booked whole by roster() before any sharing; their hours must not mix into the shared work's
+    // slowdown (RV 6: a Well seat made shared watering x1.20 where the crops alone give x1.03; ChatGPT, r3)
+    const addSeat = (job, h) => { addSpeed(job, null); abilitySpeed[job].seat += h; };
     for (const l of lines) {
       if (l.kind === "crop") {
-        for (const [k, v] of Object.entries(l.cropJobs || {})) abilityNeeds[k] = (abilityNeeds[k] || 0) + v;
+        for (const [k, v] of Object.entries(l.cropJobs || {})) {
+          abilityNeeds[k] = (abilityNeeds[k] || 0) + v;
+          if (l.speed && l.speed[k]) addSpeed(k, l.speed[k]); else addFixed(k, v);
+        }
         continue;
       }
       if (l.kind === "electric") continue;         // no Aniimo on an E-mode machine
       abilityNeeds[l.worker] = (abilityNeeds[l.worker] || 0) + l.aniimo;
+      if (l.kind === "dedicated") addSeat(l.worker, l.aniimo);
+      else if (l.speed) addSpeed(l.worker, l.speed); else addFixed(l.worker, l.aniimo);
       if (l.kind === "dedicated") fullTime[l.worker] = (fullTime[l.worker] || 0) + l.aniimo;
     }
     for (const d of devices) {
       abilityNeeds[d.worker] = (abilityNeeds[d.worker] || 0) + d.place;
+      addSeat(d.worker, d.place);
       fullTime[d.worker] = (fullTime[d.worker] || 0) + d.place;
     }
     if (G) {                                       // a generator is a full-time seat for its Lightning Aniimo
       abilityNeeds[gen.worker] = (abilityNeeds[gen.worker] || 0) + G;
+      addSeat(gen.worker, G);
       fullTime[gen.worker] = (fullTime[gen.worker] || 0) + G;
     }
     for (const [k, { r, c }] of handRecipes.entries()) {   // a by-hand facility is a full-time seat for its worker
@@ -1171,7 +1299,12 @@
       if (!op) continue;
       const job = jobName(D, op.ab, op.lv, r.fam);
       abilityNeeds[job] = (abilityNeeds[job] || 0) + c.workerHours;
+      addSeat(job, c.workerHours);
       fullTime[job] = (fullTime[job] || 0) + c.workerHours;
+    }
+    if (Number(inp.workerMaxLevel) === 4) {      // say where "level 4" could not be used
+      const low = [...new Set(Object.keys(abilityNeeds).map((j) => parseJob(D, j)).filter((q) => q && !q.fam && (inp._skillTop[q.ab] || 0) < 4).map((q) => q.ab))].sort();
+      if (low.length) warnings.push("No Aniimo has " + low.join(", ") + " at level 4: planned at level 3.");
     }
     // coin per hour is what is sold minus what is bought, whatever the solver's objective was (the fastest-
     // upgrade step 1 maximizes speed; its objective is not coin; Fable review #6)
@@ -1207,7 +1340,7 @@
               hoursPerItem: eaten.length ? eaten.reduce((acc, e) => acc + e.food, 0) / eaten.reduce((acc, e) => acc + e.perHour, 0) / (foodNeed || 1) : 0 },
       aniimo: { cap: inp.cap, reserved: inp.reserved, haulers: inp.haulers, pool, used,
                 total: used.dedicated + used.bench + used.crop + used.devices + used.byHand + used.generators },
-      abilityNeeds,
+      abilityNeeds, abilitySpeed, timeLimit: timeLimit(),
     };
   }
 
@@ -1280,44 +1413,145 @@
   function roster(D, result, includePrismana) {
     const parse = (job) => { const p = parseJob(D, job); return p ? [p.ab, p.lv, p.fam] : null; };
     const jobs = Object.entries(result.abilityNeeds || {}).map(([job, load]) => ({ job, load, ab: parse(job) })).filter((j) => j.ab && j.load > 1e-6);
-    const pool = (D.aniimo || []).filter((a) => includePrismana || !a.prismana);
+    // Prismana: everywhere with the tick box; without it only on a job planned at level 4, since only Prismana
+    // forms reach 4 there (user, 2026-10-02: "use Prismana where it needs a level 4")
+    const pool = D.aniimo || [];
+    // (the ideal roster passes abilityLevels; its own tick box alone decides Prismana there)
+    const planned4 = (j) => !result.abilityLevels && !j.ab[2] && Number(cap) === 4 && ((result.inputs || {})._skillTop || {})[j.ab[0]] === 4;
     const minLv = result.abilityLevels || {}, famLv = result.familyLevels || {};
+    const jobLv = result.jobLevels || {};          // per-job override (the ideal roster lowering its smallest jobs)
     // "Aniimo go up to level N" (user's own Aniimo): the plan already counts level-N workers, slower, on jobs
     // that ask for more, so the roster takes level N there and never suggests one above it (audit 2026-10-02:
     // with level 2 it listed a level-3 Shrubclaw for Earth 3+). The best case passes exact levels instead.
     const cap = result.inputs && result.inputs.workerMaxLevel != null && result.inputs.workerMaxLevel !== "" && !result.abilityLevels
       ? Number(result.inputs.workerMaxLevel) : 4;
-    const can = (a, j) => (!j.ab[2] || a.fam === j.ab[2])
-      && (a.ab[j.ab[0]] || 0) >= Math.max(Math.min(j.ab[1], cap), (j.ab[2] ? famLv[j.ab[2]] : minLv[j.ab[0]]) || 0)
+    // Slowness of Aniimo a on job j: share of a's own day per planned hour. The plan timed j at the assumed
+    // level; the minimum roster may pick an Aniimo that only meets the job's level (user rule), which is slower
+    // (formula 3054: level 2 on a 1+ job is 180 a minute, level 3 is 240). It used to book planned hours as
+    // its time, so Scorchhowl (Earth 2) carried 70% Earth 1+ timed at Earth 3 plus 30% Fire: ~123% of its
+    // day (ChatGPT, cross-model audit 2026-10-02; user: count each level's real speed). Seats stay 1.
+    const speed = result.abilitySpeed || {};
+    const slowCache = new Map();
+    const slow = (a, j) => {
+      const key = a.id + "|" + j.job;
+      if (slowCache.has(key)) return slowCache.get(key);
+      const sp = speed[j.job];
+      let k = 1;
+      if (sp) {
+        const lv = a.ab[j.ab[0]] || 0;
+        let planned = sp.fixed, real = sp.fixed;
+        for (const q of sp.parts) {
+          const rp = workPerMinute(q.need, q.pet, q.f, false), ra = workPerMinute(q.need, lv, q.f, false);
+          planned += q.h; real += ra > 0 ? q.h * rp / ra : Infinity;
+        }
+        k = planned > 0 ? real / planned : 1;
+      }
+      slowCache.set(key, k);
+      return k;
+    };
+    const can = (a, j) => (includePrismana || !a.prismana || planned4(j) || (result.prismanaJobs || []).includes(j.job)) && (!j.ab[2] || a.fam === j.ab[2])
+      && (a.ab[j.ab[0]] || 0) >= Math.max(Math.min(j.ab[1], cap), (j.ab[2] ? famLv[j.ab[2]] : jobLv[j.job] != null ? jobLv[j.job] : minLv[j.ab[0]]) || 0)
       && (j.ab[2] || (a.ab[j.ab[0]] || 0) <= cap);
     const out = [];
     const remaining = new Map();
     const full = result.fullTime || {};
     for (const j of jobs) {
-      // full-time seats (locked facilities, devices) are whole Aniimo; the rest can be shared
-      const whole = Math.max(Math.floor(j.load + 1e-9), Math.ceil((full[j.job] || 0) - 1e-9));
+      // full-time seats (locked facilities, devices, generators, by-hand makers) are whole Aniimo; everything
+      // else is shared work and goes to the packing below, at each Aniimo's real speed. Reserving floor(load)
+      // whole Aniimo for shared work skipped that speed and could not regroup it (RV 2, five Wheat plots: 6
+      // Aniimo where 5 fit; ChatGPT and Gemini Flash, cross-model audit round 2, found it independently).
+      const whole = Math.ceil((full[j.job] || 0) - 1e-9);
       const best = pool.filter((a) => can(a, j)).sort((a, b) => b.ab[j.ab[0]] - a.ab[j.ab[0]]
         || allLevels(b) - allLevels(a) || Object.keys(b.ab).length - Object.keys(a.ab).length)[0];
-      if (whole > 0 && best) out.push({ aniimo: best, count: whole, jobs: [{ job: j.job, load: whole }] });
-      const rest = Math.max(0, j.load - whole);
+      if (whole > 0 && best) out.push({ aniimo: best, count: whole, jobs: [{ job: j.job, load: whole, time: whole }] });
+      // with nobody able to take the whole seats, the whole load stays open, so it reaches `uncovered` and
+      // the page warns (cross-model audit 2026-10-02: a Mine with every Earth species unreleased gave an
+      // empty roster and no warning, because the seats were subtracted whether or not anyone filled them)
+      const rest = best ? Math.max(0, j.load - whole) : j.load;
       if (rest > 1e-6) remaining.set(j.job, { j, rest });
     }
+    // Shared work, exactly (HiGHS): the fewest Aniimo that cover every job's planned hours at their real speed.
+    // n[a] = how many of form a, x[a,j] = planned hours of job j it covers; per form sum(slowness * x) <= n[a];
+    // minimize sum n. The greedy packing below found
+    // 6 where 5 fit (RV 2, five Wheat plots; ChatGPT round 2) and stays as the fallback without HiGHS.
+    const exactShared = () => {
+      if (!HIGHS || !remaining.size) return false;
+      const rem = [...remaining.values()];
+      const cols = [];                             // [a, x, k] for every form that can take that job
+      // forms with the same levels in these jobs' skills (and the same family) are interchangeable here: one
+      // stands for all (217 forms made a model HiGHS could not finish in its 4 s; first measured at RV 2)
+      const skills = [...new Set(rem.map((x) => x.j.ab[0]))].sort();
+      const seen = new Map();
+      for (const a of pool) {
+        if (!rem.some((x) => can(a, x.j) && Number.isFinite(slow(a, x.j)))) continue;
+        const sig = (a.fam || "") + "|" + skills.map((k) => a.ab[k] || 0).join(",");
+        const had = seen.get(sig);
+        // keep the one the old greedy would have liked: more skills overall, then higher levels overall
+        if (!had || Object.keys(a.ab).length > Object.keys(had.ab).length
+          || (Object.keys(a.ab).length === Object.keys(had.ab).length && allLevels(a) > allLevels(had))) seen.set(sig, a);
+      }
+      // and a form at least as good in every one of those skills (same family) does anything a weaker one can,
+      // at least as fast (slowness only falls with level), so the weaker one is never needed. Still at the 4 s cap
+      // with identical forms merged; dominated ones dropped makes it small.
+      // Dominance by what each form can DO here, not by raw levels: at "go up to level 2" Shrubclaw (Earth 3) cannot
+      // take Earth work, so it must not knock out Budclaw (Earth 1); that made 3 Aniimo where 2 fit (ChatGPT, r3).
+      const cands = [...seen.values()];
+      const better = (o, a) => rem.every((x) => !can(a, x.j) || (can(o, x.j) && slow(o, x.j) <= slow(a, x.j)))
+        && rem.some((x) => (can(o, x.j) && !can(a, x.j)) || (can(o, x.j) && slow(o, x.j) < slow(a, x.j)));
+      const forms = cands.filter((a) => !cands.some((o) => o !== a && better(o, a)));
+      if (!forms.length) return false;
+      const nCol = new Map();
+      for (const a of forms) {
+        nCol.set(a, cols.length); cols.push(null);   // n[a]
+        for (const x of rem) if (can(a, x.j)) { const k = slow(a, x.j); if (Number.isFinite(k)) cols.push([a, x, k]); }
+      }
+      const N = cols.length, obj = new Array(N).fill(0), rows = [], b = [];
+      // heads only: a small "prefer faster" weight on x made HiGHS prove ties for 1-2.6 s per roster, without
+      // it 75-120 ms for the same totals (RV 2/12/20). Which form fills a head is already chosen above.
+      for (let c = 0; c < N; c++) obj[c] = cols[c] ? 0 : -1;
+      for (const x of rem) {                       // cover exactly: rest <= sum x[.,j] <= rest
+        // (">=" alone let HiGHS book work nobody needs at no cost: "Grass 1+ covered 1.14 of 0.54", math sweep)
+        const r = new Array(N).fill(0); let any = false;
+        cols.forEach((c, i) => { if (c && c[1] === x) { r[i] = -1; any = true; } });
+        if (!any) continue;
+        rows.push(r); b.push(-x.rest + 1e-9);
+        rows.push(r.map((v) => -v)); b.push(x.rest + 1e-9);
+      }
+      for (const [a, ci] of nCol) {                // real time fits the whole Aniimo of that form
+        const r = new Array(N).fill(0); r[ci] = -1;
+        cols.forEach((c, i) => { if (c && c[0] === a) r[i] = c[2]; });
+        rows.push(r); b.push(0);
+      }
+      const res = solveHighs(obj, rows, b, [...nCol.values()], []);
+      if (!res || res.status !== "optimal") return false;
+      for (const [a, ci] of nCol) {
+        const n = Math.round(res.x[ci]);
+        if (n < 1) continue;
+        const jobs = [];
+        cols.forEach((c, i) => { if (c && c[0] === a && res.x[i] > 1e-9) jobs.push({ job: c[1].j.job, load: res.x[i], time: res.x[i] * c[2] }); });
+        if (jobs.length) out.push({ aniimo: a, count: n, jobs });
+      }
+      for (const x of rem) if (forms.some((a) => can(a, x.j))) remaining.delete(x.j.job);
+      return true;
+    };
     const spareFill = () => {
       for (const m of out) {
         if (m.count !== 1) continue;
-        let spare = 1 - m.jobs.reduce((acc, j) => acc + j.load, 0);
+        let spare = 1 - m.jobs.reduce((acc, j) => acc + j.time, 0);
         for (const x of [...remaining.values()].sort((a, b) => b.rest - a.rest)) {
           if (spare <= 1e-6) break;
           if (!can(m.aniimo, x.j)) continue;
-          const t = Math.min(spare, x.rest);
+          const k = slow(m.aniimo, x.j);
+          if (!Number.isFinite(k)) continue;
+          const t = Math.min(spare / k, x.rest);   // planned hours it covers; t * k of its own day
           const same = m.jobs.find((j) => j.job === x.j.job);
-          if (same) same.load += t; else m.jobs.push({ job: x.j.job, load: t });
-          spare -= t; x.rest -= t;
+          if (same) { same.load += t; same.time += t * k; } else m.jobs.push({ job: x.j.job, load: t, time: t * k });
+          spare -= t * k; x.rest -= t;
           if (x.rest <= 1e-6) remaining.delete(x.j.job);
         }
       }
     };
-    let guard = 0;
+    let guard = exactShared() ? 200 : 0;          // exact covered it: skip the greedy packing
     while (remaining.size && guard++ < 200) {
       spareFill();
       if (!remaining.size) break;
@@ -1326,17 +1560,26 @@
         const fits = [...remaining.values()].filter((x) => can(a, x.j)).sort((x, y) => y.rest - x.rest);
         let cap = 1, score = 0;
         const take = [];
-        for (const x of fits) { const t = Math.min(cap, x.rest); if (t <= 1e-6) break; take.push([x, t]); cap -= t; score += t; }
+        for (const x of fits) {
+          const k = slow(a, x.j);
+          if (!Number.isFinite(k)) continue;
+          const t = Math.min(cap / k, x.rest); if (t <= 1e-6) break; take.push([x, t, k]); cap -= t * k; score += t;
+        }
         const lvl = take.reduce((acc, [x]) => acc + (a.ab[x.j.ab[0]] || 0), 0) * 100 + allLevels(a);
         if (score > bestScore + 1e-9 || (Math.abs(score - bestScore) <= 1e-9 && bestA && lvl > bestA._lvl)) {
           bestA = Object.assign({}, a, { _lvl: lvl }); bestTake = take; bestScore = score;
         }
       }
       if (!bestA || bestScore <= 1e-6) break;
-      out.push({ aniimo: bestA, count: 1, jobs: bestTake.map(([x, t]) => ({ job: x.j.job, load: t })) });
+      out.push({ aniimo: bestA, count: 1, jobs: bestTake.map(([x, t, k]) => ({ job: x.j.job, load: t, time: t * k })) });
       for (const [x, t] of bestTake) { x.rest -= t; if (x.rest <= 1e-6) remaining.delete(x.j.job); }
     }
-    return { members: out, total: out.reduce((acc, m) => acc + m.count, 0), uncovered: [...remaining.keys()] };
+    // The plan only limits total Aniimo-hours; whole Aniimo with the right skills can need more heads than the
+    // production slots (RV 2 defaults: 7 for 6, cross-model audit 2026-10-02). Say so instead of hiding it.
+    const total = out.reduce((acc, m) => acc + m.count, 0);
+    const inp = result.inputs || {};
+    const slots = inp.cap != null ? Math.max(0, inp.cap - (inp.reserved || 0) - (inp.haulers || 0)) : null;
+    return { members: out, total, uncovered: [...remaining.keys()], slots, over: slots != null && total > slots ? total - slots : 0 };
   }
 
   // Ideal personality for one roster member (user request): each bench has one MBTI letter that gives +20%
@@ -1350,7 +1593,9 @@
     const benches = {};                            // letter -> facilities
     let total = 0;
     for (const j of member.jobs) {
-      const load = j.load * (member.count || 1);
+      // j.load already holds the whole row ("2x" seat rows and exact rows both store the total): multiplying by the
+      // count doubled every weight. Harmless, since only ratios are used, but wrong (both AIs, round 3)
+      const load = j.load;
       total += load;
       const lines = (result.lines || []).filter((l) => l.worker === j.job);
       const jobTotal = lines.reduce((s2, l) => s2 + l.aniimo, 0);
@@ -1385,16 +1630,65 @@
     return best;
   }
 
-  // Best case: the same layout, every job done by the best Aniimo in the game for it, personality matched.
-  function bestCase(D, userInputs, includePrismana) {
-    D = released(D, (userInputs || {}).unreleased);
-    const levels = bestAbilityLevels(D, includePrismana);
-    // pens: the best of their own family (Dewy family tops out at Leisure 3, Susuta Prismana has 4)
+  // pens: the best of their own family (Dewy family tops out at Leisure 3, Susuta Prismana has 4)
+  function bestFamilyLevels(D, includePrismana) {
     const fams = {};
     for (const r of D.recipes) {
       const op = r.fam && mainOp(r);
       if (op) fams[r.fam] = familyBest(D, r.fam, op.ab, includePrismana);
     }
+    return fams;
+  }
+
+  // Ideal roster (user, 2026-10-02: "minimum is what you need, ideal is the best case roster"): the best
+  // Aniimo in the game for every job of THIS plan. bestCase below re-plans with those Aniimo, and from RV 12 up
+  // that plan drops the Crackle Generators the shown plan places, so its roster had nobody for them (cross-
+  // model audit). Same jobs, best levels; their real speed books them (roster), so it can need fewer Aniimo.
+  function idealRoster(D, result, includePrismana) {
+    D = released(D, ((result && result.inputs) || {}).unreleased);
+    // basis: the plan with the levels this roster was held to, for the page's alternatives and personalities
+    const levels = bestAbilityLevels(D, includePrismana);
+    // "go up to level 4" timed some skills at 4, which only Prismana forms have: there the best is 4 and Prismana is
+    // allowed even with the tick box off, like the minimum roster (an Earth-3 seat made 20% less; ChatGPT, final)
+    const inp = result.inputs || {}, top = inp._skillTop || {}, prismanaJobs = [];
+    if (!includePrismana && Number(inp.workerMaxLevel) === 4) for (const job of Object.keys(result.abilityNeeds || {})) {
+      const q = parseJob(D, job);
+      if (q && !q.fam && top[q.ab] === 4) { levels[q.ab] = 4; prismanaJobs.push(job); }
+    }
+    const basis = Object.assign({}, result, { abilityLevels: levels, familyLevels: bestFamilyLevels(D, includePrismana), prismanaJobs });
+    // It must fit the home (user, 2026-10-02: "the ideal must fit the maximum it can fit on that level"). The best
+    // level everywhere means specialists, and at RV 2 that was 9 Aniimo for 8 places. So, while it does not fit,
+    // the JOB with the least work drops one level (never below what it asks), and `relaxed` lists those jobs.
+    // Per job, not per skill (Gemini Flash, round 3): lowering a skill let its big jobs go to weaker Aniimo too.
+    const home = result.inputs && result.inputs.cap != null ? Number(result.inputs.cap) : Infinity;
+    const jobs = Object.entries(result.abilityNeeds || {}).map(([job, h]) => ({ job, h, q: parseJob(D, job) }))
+      .filter((x) => x.q && !x.q.fam).sort((x, y) => x.h - y.h);
+    basis.jobLevels = {};
+    const relaxed = [];
+    let R = roster(D, basis, includePrismana);
+    while (R.total > home) {
+      const x = jobs.find((y) => (basis.jobLevels[y.job] != null ? basis.jobLevels[y.job] : levels[y.q.ab] || 0) > y.q.lv);
+      if (!x) break;                               // nothing left to lower: show it as it is, over
+      basis.jobLevels[x.job] = (basis.jobLevels[x.job] != null ? basis.jobLevels[x.job] : levels[x.q.ab]) - 1;
+      if (!relaxed.includes(x.job)) relaxed.push(x.job);
+      R = roster(D, basis, includePrismana);
+    }
+    // ... then give back what fitting did not need, biggest jobs first: lowering the smallest job first can leave
+    // an earlier one lowered for nothing (RV 2: Wind 1+ fitted at the best level; ChatGPT, round 3)
+    if (R.total <= home) for (const job of [...relaxed].sort((x, y) => (result.abilityNeeds[y] || 0) - (result.abilityNeeds[x] || 0))) {
+      const was = basis.jobLevels[job];
+      delete basis.jobLevels[job];
+      const back = roster(D, basis, includePrismana);
+      if (back.total <= home) { R = back; relaxed.splice(relaxed.indexOf(job), 1); } else basis.jobLevels[job] = was;
+    }
+    return Object.assign(R, { basis, relaxed });
+  }
+
+  // Best case: the same layout, every job done by the best Aniimo in the game for it, personality matched.
+  function bestCase(D, userInputs, includePrismana) {
+    D = released(D, (userInputs || {}).unreleased);
+    const levels = bestAbilityLevels(D, includePrismana);
+    const fams = bestFamilyLevels(D, includePrismana);
     return Object.assign(plan(D, Object.assign({}, userInputs, { abilityLevels: levels, familyLevels: fams, personality: true })),
       { abilityLevels: levels, familyLevels: fams });
   }
@@ -1515,16 +1809,25 @@
   // Alternatives for one roster row (user request): every other Aniimo form that can do ALL of that row's
   // jobs, forms with identical job sets merged. Order (user, 2026-09-28): the most abilities first, since a
   // many-skilled Aniimo can also cover other jobs; then the levels it brings to this row's jobs (faster).
-  function alternatives(D, member, includePrismana, minLevels, familyLevels) {
+  // maxLevel: the player's "Aniimo go up to level N" (minimum roster only). Like roster()'s can(): a job asks for
+  // at most N, and nobody above N is offered, since those are not the player's (Gemini Flash, cross-model round
+  // 2: with level 2, a Fire 2 Aniimo on a Fire 3+ bench got only level-3 alternatives).
+  function alternatives(D, member, includePrismana, minLevels, familyLevels, maxLevel) {
     const minLv = minLevels || {}, famLv = familyLevels || {};   // best case: alternatives reach the best level too
+    const cap = maxLevel != null && maxLevel !== "" ? Number(maxLevel) : 4;
+    // An alternative is at least as good as the suggested Aniimo on each of its jobs, so it never lowers the plan's
+    // output (ChatGPT r3: Earth 2 offered for an Earth 3 Mine seat, 25% less), and it follows whatever that member
+    // was held to: lowered ideal jobs, level-4 Prismana jobs (Gemini Flash r3: both listed nobody). minLevels and
+    // familyLevels are kept for callers; the member's own levels already carry them.
     const needs = member.jobs.map((j) => parseJob(D, j.job)).filter(Boolean)
-      .map((p) => [p.ab, Math.max(p.lv, (p.fam ? famLv[p.fam] : minLv[p.ab]) || 0), p.fam]);
+      .map((p) => [p.ab, Math.max(p.fam ? p.lv : Math.min(p.lv, cap), member.aniimo.ab[p.ab] || 0, (p.fam ? famLv[p.fam] : 0) || 0), p.fam]);
+    const prismanaOk = includePrismana || !!member.aniimo.prismana;
     const sig = (a) => a.n + "|" + JSON.stringify(Object.entries(a.ab).sort());
     const chosen = sig(member.aniimo);
     const groups = new Map();
     for (const a of D.aniimo || []) {
-      if (!includePrismana && a.prismana) continue;
-      if (!needs.every(([ab, lv, fam]) => (a.ab[ab] || 0) >= lv && (!fam || a.fam === fam))) continue;
+      if (!prismanaOk && a.prismana) continue;
+      if (!needs.every(([ab, lv, fam]) => (a.ab[ab] || 0) >= lv && (!fam || a.fam === fam) && (fam || (a.ab[ab] || 0) <= cap))) continue;
       if (sig(a) === chosen) continue;
       const g = groups.get(sig(a));
       if (!g) groups.set(sig(a), Object.assign({}, a, { formNames: [a.fn || "Basic Form"], formIds: [a.form] }));
@@ -1535,7 +1838,7 @@
       || jobLevels(b) - jobLevels(a) || a.n.localeCompare(b.n));
   }
 
-  const api = { coverage, coverFits, plan, rvLimits, wholeCounts, idealPersonality, alternatives, defaults, workPerMinute, recipeChoices, candidates, bestAbilityLevels, bestCase, roster, formLabel, parseJob, familyBest, released, rvChain, rvTime, useSolver,
-    lineMoney, solverName: () => (HIGHS ? "HiGHS" : "built-in"), solverTimeLimit: () => HIGHS_OPTIONS.time_limit };
+  const api = { coverage, coverFits, plan, rvLimits, wholeCounts, idealPersonality, alternatives, defaults, workPerMinute, recipeChoices, candidates, bestAbilityLevels, bestCase, idealRoster, roster, formLabel, parseJob, familyBest, released, rvChain, rvTime, useSolver,
+    lineMoney, solverName: () => (HIGHS ? "HiGHS" : "built-in"), solverTimeLimit: timeLimit };
   if (typeof module !== "undefined") module.exports = api; else root.Planner = api;
 })(this);

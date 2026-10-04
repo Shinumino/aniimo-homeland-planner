@@ -192,6 +192,8 @@
     "{0} abilities": "{0} habilidades",
     "any (no bench bonus for these jobs)": "qualquer uma (sem bônus de bancada nesses trabalhos)",
     "+20% on {0}% of its work": "+20% em {0}% do trabalho dele",
+    "{0} is the recommended personality, but this Aniimo can't have it: use the alternatives →":
+      "{0} é a personalidade recomendada, mas este Aniimo não pode ter: use as alternativas →",
     "{0}: {1} Aniimo.": "{0}: {1} Aniimo.",
     "Click a column to sort.": "Clique numa coluna para ordenar.",
     "Jobs it can do": "Trabalhos que faz",
@@ -261,6 +263,12 @@
     "work": "funcionar",
     " and ": " e ",
     "This layout cannot make the RV {0} materials: see Next RV level.": "Este layout não consegue fazer os materiais do Motorhome {0}: veja Próximo nível do Motorhome.",
+    "A full-time bench must never run out of ingredients: this can leave benches unused, rule out recipes or make the plan impossible.":
+      "Uma bancada em tempo integral nunca pode ficar sem ingredientes: isso pode deixar bancadas sem uso, impedir receitas ou tornar o plano impossível.",
+    "A full-time bench must never run out of ingredients, and {0} cannot keep working non-stop. Untick them under Facilities that lock an Aniimo full time.":
+      "Uma bancada em tempo integral nunca pode ficar sem ingredientes, e não dá para manter {0} trabalhando sem parar. Desmarque em Instalações que prendem um Aniimo o tempo todo.",
+    "A full-time bench must never run out of ingredients, and {1} cannot keep working non-stop on the RV {0} materials. Untick them under Facilities that lock an Aniimo full time.":
+      "Uma bancada em tempo integral nunca pode ficar sem ingredientes, e não dá para manter {1} trabalhando sem parar nos materiais do Motorhome {0}. Desmarque em Instalações que prendem um Aniimo o tempo todo.",
     "the plan makes no spare {0}": "o plano não sobra {0}",
     "no {0}": "sem {0}",
     "{0} Lv {1} needed": "precisa de {0} Nv. {1}",
@@ -320,6 +328,10 @@
           [/^RV (\d+) allows (\d+) (.+): (.+) not planned\.$/, (m) => T("RV {0} allows {1} {2}: {3} not planned.", m[1], m[2], N.fac(m[3]), N.itemByName(m[4]))],
           [/^Nothing in your layout can make (.+)\.$/, (m) => T("Nothing in your layout can make {0}.", N.itemByName(m[1]))],
           [/^This layout cannot make the RV (\d+) materials: see Next RV level\.$/, (m) => T("This layout cannot make the RV {0} materials: see Next RV level.", m[1])],
+          [/^A full-time bench must never run out of ingredients, and (.+) cannot keep working non-stop\. Untick them under Facilities that lock an Aniimo full time\.$/, (m) => T("A full-time bench must never run out of ingredients, and {0} cannot keep working non-stop. Untick them under Facilities that lock an Aniimo full time.",
+            m[1].split(/, | and /).map(N.fac).join(", ").replace(/, ([^,]*)$/, T(" and ") + "$1"))],
+          [/^A full-time bench must never run out of ingredients, and (.+) cannot keep working non-stop on the RV (\d+) materials\. Untick them under Facilities that lock an Aniimo full time\.$/, (m) => T("A full-time bench must never run out of ingredients, and {1} cannot keep working non-stop on the RV {0} materials. Untick them under Facilities that lock an Aniimo full time.",
+            m[2], m[1].split(/, | and /).map(N.fac).join(", ").replace(/, ([^,]*)$/, T(" and ") + "$1"))],
           [/^This layout cannot (.+) with the Aniimo available\./, (m) => T("This layout cannot {0} with the Aniimo available. Lower a target, add facilities, or turn food planning off.",
             m[1].split(" and ").map((w) => { const f = /^feed (\d+) Aniimo$/.exec(w); return f ? T("feed {0} Aniimo", f[1]) : T(w); }).join(T(" and ")))],
           [/^the plan makes no spare (.+)$/, (m) => T("the plan makes no spare {0}", N.itemByName(m[1]))],

@@ -41,6 +41,15 @@ your browser. The website counts visits anonymously with [GoatCounter](https://w
 
 **October 2026**
 
+- Facilities you set to keep an Aniimo full time: a full-time bench must never run out of ingredients. The
+  page now says so under that list, and when unticking a bench would earn more, it names that bench.
+  "Plan for the fastest upgrade" now names the full-time benches that block the upgrade instead of saying
+  your layout cannot make it.
+- Some Aniimo always have certain personality letters, because their evolution needs them (for example
+  Nighttime Piopiota is always E and P, so never J). When the best letter for a job is one that Aniimo can
+  never have, the roster says so and points you to the alternatives.
+- The roster tables have a clearer line between rows.
+
 - The page no longer freezes while it plans: big RV levels can take a few seconds, but you can keep
   using the page. Plans at RV 16-20 are also better, because the planner now has time to finish.
 - The minimum roster is now truly the fewest Aniimo, and counts each Aniimo's real speed.

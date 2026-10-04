@@ -411,16 +411,82 @@
   // gets one more variable t = upgrades per hour: the RV materials must pile up at need * t and the income
   // must cover coin * t. Step 1 maximizes t; step 2 keeps 99.9% of that t and maximizes coin. Time to be
   // ready = 1 / t hours; the chain benches and their Aniimo are inside the plan.
+  // Full-time benches in the coin plan. A full-time facility runs non-stop (x = y in planCore), right for the game
+  // (an Aniimo leaves a bench with no ingredients; user, 2026-10-03), but a bench its layout cannot keep supplied
+  // was then left out, or set to a worse recipe, with no word (ChatGPT r6: RV 12 with every bench ticked earned
+  // 89,638/h, unticked 136,958/h). The user asked for both: `fullTimeIngredient` = ticked facilities that use
+  // ingredients (the page's general note), and, only when re-planning without the ticks of the benches the plan
+  // left short proves they cost something, `fullTimeBlocked` + a warning naming them. That extra solve runs only
+  // when a ticked ingredient bench is not fully used, so a bench that is fully used on a worse recipe is NOT
+  // named (Fable, audit r7: only reachable through `keep`, which the page does not send; its sweep of every
+  // ingredient bench at RV 10, 12 and 14 found no such case). The general note still covers it.
+  // ticked full-time facilities in the layout with a recipe that uses ingredients: no solve, so the page can ask
+  // in any mode (fastest upgrade too). Crop plots are "production" with a seed as input, but a crop tick makes
+  // nothing run non-stop: counting them cost a second full solve for nothing (ChatGPT, audit r7: RV 20 7.3 -> 14.9 s)
+  function fullTimeIngredient(D, inp) {
+    const recipes = available(D, inp);
+    return (inp.dedicated || []).filter((f) => inp.facilities[f] && inp.facilities[f].count > 0
+      && recipes.some(({ r, fac }) => fac === f && r.k !== "production" && r.in.length > 0));
+  }
+  function fullTimeCheck(D, userInputs, p) {
+    if (p.status !== "optimal") return p;
+    const inp = p.inputs, ded = inp.dedicated || [];
+    p.fullTimeIngredient = fullTimeIngredient(D, inp);
+    const used = (q, f) => q.lines.filter((l) => l.facility === f).reduce((s2, l) => s2 + (l.benches || 0), 0);
+    const short = p.fullTimeIngredient.filter((f) => used(p, f) < inp.facilities[f].count);
+    // a capped plan names nothing, so do not pay for the solve (ChatGPT r8); nor on the built-in search (Fable gate)
+    if (!short.length || p.capped || !HIGHS) return p;
+    const freed = planCore(D, Object.assign({}, userInputs, { dedicated: ded.filter((f) => !short.includes(f)) }));
+    // a plan stopped at the time cap is "best found", not best: comparing two of them could blame a tick for a
+    // better incumbent (Fable, audit r7), so a capped side names nothing
+    if (freed.status !== "optimal" || freed.capped || !(freed.coinPerHour > p.coinPerHour * 1.001 + 1)) return p;
+    // "works more without the tick" by busy bench time (`count`), not bench count: with one recipe per bench off
+    // an unticked bench has no count (Gemini, audit r7), and not Aniimo time either: an E-mode line has none, so a
+    // bench that runs on power once unticked looked unused and every short bench was named (both AIs, audit r8)
+    const work = (q, f) => q.lines.filter((l) => l.facility === f).reduce((s2, l) => s2 + (l.count || 0), 0);
+    const more = short.filter((f) => work(freed, f) > work(p, f) + 1e-9);
+    p.fullTimeBlocked = (more.length ? more : short).sort();
+    const names = p.fullTimeBlocked.length === 1 ? p.fullTimeBlocked[0]
+      : p.fullTimeBlocked.slice(0, -1).join(", ") + " and " + p.fullTimeBlocked[p.fullTimeBlocked.length - 1];
+    p.warnings = (p.warnings || []).concat("A full-time bench must never run out of ingredients, and " + names
+      + " cannot keep working non-stop. Untick them under Facilities that lock an Aniimo full time.");
+    return p;
+  }
+
   function plan(D, userInputs) {
     D = released(D, (userInputs || {}).unreleased);
     const level = userInputs && userInputs.fastRv;
     const chain = level ? rvChain(D, Number(level)) : null;
-    if (!chain) return planCore(D, userInputs);
+    if (!chain) return fullTimeCheck(D, userInputs, planCore(D, userInputs));
     const rv = { mats: chain.mats, coin: chain.cur === 1010 ? chain.coin : 0 };
     const fastest = planCore(D, Object.assign({}, userInputs, { _rv: rv }));
     const t = fastest.status === "optimal" ? fastest.rvRate : 0;
     if (!(t > 1e-9)) {
       const p = planCore(D, userInputs);
+      // A search stopped at the time cap with no upgrade rate proves nothing: it was read as "the ticks block it"
+      // or "this layout cannot make it" (ChatGPT + Gemini, audit r8). Say it ran out of time instead.
+      if (fastest.status === "time_limit" || fastest.capped) {
+        p.warnings = (p.warnings || []).filter((w) => !/^No plan found within/.test(w))
+          .concat("No plan found within " + timeLimit() + " s. Try fewer options or a smaller layout.");
+        return Object.assign(p, { fastRv: { level: chain.level, reachable: false, timedOut: true } });
+      }
+      // A full-time facility runs non-stop, and an RV material is a two-step chain on ONE bench type, 8 to 1:
+      // a non-stop second step needs 8 benches feeding it. That is the game's rule too (an Aniimo leaves a
+      // bench with no ingredients; user, 2026-10-03), so the plan stays; but "cannot make" was false on a
+      // friend's RV 10 setup with both benches. Untick the chain's full-time benches once: if that plans the
+      // upgrade, say which ticks block it.
+      const ded = (userInputs && userInputs.dedicated) || [];
+      const chainFacs = new Set(chain.steps.map((s) => s.fac[0]));
+      const blocking = ded.filter((f) => chainFacs.has(f)).sort();
+      // not on the built-in search: no time cap there, and it took 5.8 s -> 78.8 s for nothing (Fable gate)
+      const freed = blocking.length && HIGHS ? planCore(D, Object.assign({}, userInputs, { _rv: rv, dedicated: ded.filter((f) => !chainFacs.has(f)) })) : null;
+      if (freed && freed.status === "optimal" && freed.rvRate > 1e-9) {
+        const names = blocking.length === 1 ? blocking[0] : blocking.slice(0, -1).join(", ") + " and " + blocking[blocking.length - 1];
+        // the reason first: "full time" assumes the bench never runs out of ingredients (user, 2026-10-03)
+        p.warnings = (p.warnings || []).concat("A full-time bench must never run out of ingredients, and " + names
+          + " cannot keep working non-stop on the RV " + chain.level + " materials. Untick them under Facilities that lock an Aniimo full time.");
+        return Object.assign(p, { fastRv: { level: chain.level, reachable: false, fullTime: blocking } });
+      }
       p.warnings = (p.warnings || []).concat("This layout cannot make the RV " + chain.level + " materials: see Next RV level.");
       return Object.assign(p, { fastRv: { level: chain.level, reachable: false } });
     }
@@ -1607,17 +1673,30 @@
         (benches[l.mbti] = benches[l.mbti] || new Set()).add(l.facility);
       }
     }
+    // Some forms always have letters (data.js mbti: their evolution needs them, e.g. Piopiota Nighttime = E and P),
+    // so the other letter of that pair is impossible. The code keeps the recommendation (user, 2026-10-03: "J is
+    // recommended but this Aniimo can't have it, use the alternatives"); `impossible` names it and its benches,
+    // and share counts only letters it can have (ChatGPT: no +20% promise). A tie goes to the letter it can have.
+    const fixed = (member.aniimo && member.aniimo.mbti) || "";
     let code = "", boosted = 0;
-    const help = {};
+    const help = {}, impossible = [];
     for (const [a, b] of PAIRS) {
       const wa = weight[a] || 0, wb = weight[b] || 0;
       if (!wa && !wb) { code += "?"; continue; }
-      const pick = wa >= wb ? a : b;
+      const pick = wa > wb || (wa === wb && !fixed.includes(b)) ? a : b;
       code += pick;
-      boosted += Math.max(wa, wb);
       help[pick] = [...benches[pick]];
+      // the pick is impossible: then the form has the other letter, and that work is boosted for certain
+      // (Piopiota Nighttime, 30% on a Mine (P), 70% on a Nimbus Bed (J): share 0.3, not 0; Fable, audit r7)
+      if (fixed.includes(pick === a ? b : a)) {
+        impossible.push({ letter: pick, facilities: help[pick] });
+        const other = pick === a ? b : a;          // listed too, so the "+20%" reads against the letter it has (Gemini r8)
+        if (benches[other]) help[other] = [...benches[other]];
+        boosted += Math.min(wa, wb);
+      }
+      else boosted += Math.max(wa, wb);
     }
-    return { code, help, share: total > 0 ? boosted / total : 0 };
+    return { code, help, share: total > 0 ? boosted / total : 0, impossible };
   }
 
   // Highest level of every ability among all Aniimo (optionally counting Prismana forms).
@@ -1822,7 +1901,9 @@
     const needs = member.jobs.map((j) => parseJob(D, j.job)).filter(Boolean)
       .map((p) => [p.ab, Math.max(p.fam ? p.lv : Math.min(p.lv, cap), member.aniimo.ab[p.ab] || 0, (p.fam ? famLv[p.fam] : 0) || 0), p.fam]);
     const prismanaOk = includePrismana || !!member.aniimo.prismana;
-    const sig = (a) => a.n + "|" + JSON.stringify(Object.entries(a.ab).sort());
+    // fixed letters are part of the signature: Basic Panpanta (any letters) merged behind Nighttime Panpanta
+    // (always I and J) hid the one that can be E or P (ChatGPT, 2026-10-03)
+    const sig = (a) => a.n + "|" + JSON.stringify(Object.entries(a.ab).sort()) + "|" + (a.mbti || "");
     const chosen = sig(member.aniimo);
     const groups = new Map();
     for (const a of D.aniimo || []) {
@@ -1838,7 +1919,7 @@
       || jobLevels(b) - jobLevels(a) || a.n.localeCompare(b.n));
   }
 
-  const api = { coverage, coverFits, plan, rvLimits, wholeCounts, idealPersonality, alternatives, defaults, workPerMinute, recipeChoices, candidates, bestAbilityLevels, bestCase, idealRoster, roster, formLabel, parseJob, familyBest, released, rvChain, rvTime, useSolver,
+  const api = { coverage, coverFits, plan, fullTimeIngredient, rvLimits, wholeCounts, idealPersonality, alternatives, defaults, workPerMinute, recipeChoices, candidates, bestAbilityLevels, bestCase, idealRoster, roster, formLabel, parseJob, familyBest, released, rvChain, rvTime, useSolver,
     lineMoney, solverName: () => (HIGHS ? "HiGHS" : "built-in"), solverTimeLimit: timeLimit };
   if (typeof module !== "undefined") module.exports = api; else root.Planner = api;
 })(this);

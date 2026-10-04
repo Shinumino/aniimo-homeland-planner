@@ -6,18 +6,18 @@
 <title>Aniimo Homeland Planner</title>
 <style>
   :root {
-    --bg: #f6f5f1; --panel: #ffffff; --ink: #1f2328; --muted: #6a6f76; --line: #e3e1da;
+    --bg: #f6f5f1; --panel: #ffffff; --ink: #1f2328; --muted: #6a6f76; --line: #e3e1da; --line-row: #c6c3ba;
     --accent: #2f7d5b; --accent-soft: #e3f1ea; --warn: #9a5b00; --warn-soft: #fff3dc; --bad: #b3261e;
     --bar1: #2f7d5b; --bar2: #5a8fd6; --bar3: #d6a23a; --bar4: #9b6ad6;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
-      --bg: #16181b; --panel: #1f2226; --ink: #e8e6e1; --muted: #9aa0a6; --line: #30343a;
+      --bg: #16181b; --panel: #1f2226; --ink: #e8e6e1; --muted: #9aa0a6; --line: #30343a; --line-row: #4a4f57;
       --accent: #5cc095; --accent-soft: #1f3a2f; --warn: #f0b451; --warn-soft: #3a2f1a; --bad: #ff8a80;
     }
   }
   :root[data-theme="dark"] {
-    --bg: #16181b; --panel: #1f2226; --ink: #e8e6e1; --muted: #9aa0a6; --line: #30343a;
+    --bg: #16181b; --panel: #1f2226; --ink: #e8e6e1; --muted: #9aa0a6; --line: #30343a; --line-row: #4a4f57;
     --accent: #5cc095; --accent-soft: #1f3a2f; --warn: #f0b451; --warn-soft: #3a2f1a; --bad: #ff8a80;
   }
   * { box-sizing: border-box; }
@@ -44,8 +44,11 @@
   th { color: var(--muted); font-weight: 600; font-size: 12px; }
   td.num, th.num { text-align: right; }
   .fac-table td { padding: 3px 4px; }
+  /* roster rows are tall (jobs, personality, alternatives): a darker line keeps one row together (user, 2026-10-03) */
+  .roster-table > tbody > tr > td { border-bottom-color: var(--line-row); }
   .fac-table input, .fac-table select { width: 52px; }
   .warn { background: var(--warn-soft); color: var(--warn); border-radius: 8px; padding: 8px 10px; margin: 0 0 10px; }
+  .warn:empty { display: none; }               /* a cleared note is not an empty yellow box (Gemini, audit r7) */
   .bar { display: flex; height: 14px; border-radius: 7px; overflow: hidden; background: var(--line); margin: 6px 0; }
   .bar span { display: block; height: 100%; }
   .legend { display: flex; flex-wrap: wrap; gap: 10px; font-size: 12px; color: var(--muted); }
@@ -130,6 +133,7 @@
       <details><summary>Facilities that lock an Aniimo full time</summary>
         <div id="dedicated"></div>
         <div class="hint">These keep their Aniimo until the output is full, so each one uses a whole Aniimo.</div>
+        <div id="dedicatedNote" class="warn" style="margin-top:6px"></div>
       </details>
     </section>
 
@@ -581,6 +585,10 @@
           "<b>" + dur(f.readyHours) + "</b>", fmt(f.upgradeHours, 1), f.level, "<b>" + dur(f.readyHours + f.upgradeHours) + "</b>")}</div>
         <div class="muted">${T("Makes per hour: {0}; sets aside {1} {2}/h of the {3}/h it earns.",
           f.perHour.map(([i, q]) => fmt(q, 1) + " " + name(i)).join(", "), fmt(f.coinForUpgrade), cur, fmt(res.coinPerHour))}</div>`;
+    } else if (f && f.timedOut) {                // the search ran out of time: that says nothing about the layout
+      out += `<div class="warn" style="margin-top:8px">${N.msg(res.warnings.find((w) => /^No plan found within/.test(w)))}</div>`;
+    } else if (f && f.fullTime) {                // the full-time ticks block the chain, not the layout
+      out += `<div class="warn" style="margin-top:8px">${N.msg(res.warnings.find((w) => /^A full-time bench must never run out/.test(w)))}</div>`;
     } else if (f) {
       out += `<div class="warn" style="margin-top:8px">${T("This layout cannot make the RV {0} materials.", f.level)}</div>`;
     }
@@ -765,6 +773,10 @@
     lastInputs = inp;
 
     $("warnings").innerHTML = (p.warnings || []).map((w) => `<div class="warn">${N.msg(w)}</div>`).join("");
+    // general note when a ticked full-time facility uses ingredients (user, 2026-10-03); the plan's own warning
+    // names the benches only when unticking them would really earn more
+    $("dedicatedNote").textContent = p.inputs && P.fullTimeIngredient(D, p.inputs).length
+      ? T("A full-time bench must never run out of ingredients: this can leave benches unused, rule out recipes or make the plan impossible.") : "";
     if (p.status !== "optimal") {
       $("headline").textContent = T("No plan");
       $("subline").textContent = T(p.status);
@@ -992,7 +1004,8 @@
           <td class="adv" data-v="${work}">${m.jobs.map((j) => { const t = j.time != null ? j.time : j.load; return N.job(j.job) + (m.count === 1 && t < 0.995 ? " (" + fmt(t * 100) + "%)" : ""); }).join(" · ")}</td>
           <td class="adv" data-v="${ip.share}">${!Object.keys(ip.help).length ? `<span class="muted">${T("any (no bench bonus for these jobs)")}</span>`
             : `<b style="letter-spacing:.08em">${ip.code}</b><div class="muted" style="font-size:12px">${Object.entries(ip.help).map(([k, f]) => k + ": " + f.map(N.fac).join(", ")).join(" · ")}
-              · ${T("+20% on {0}% of its work", fmt(ip.share * 100))}</div>`}</td>
+              ${ip.share > 0 ? "· " + T("+20% on {0}% of its work", fmt(ip.share * 100)) : ""}</div>
+              ${(ip.impossible || []).map((x) => `<div class="warn" style="font-size:12px">${T("{0} is the recommended personality, but this Aniimo can't have it: use the alternatives →", x.letter)}</div>`).join("")}`}</td>
           <td class="adv" style="font-size:12px" data-v="${alts.length}">${altHtml(m, res)}</td></tr>`;
       }).join("");
       // the ideal roster (it has `relaxed`) fits the home by design and says in plain words what that cost
@@ -1009,7 +1022,7 @@
           + (R.relaxed.length ? `<div class="warn">${T("To fit your home, these jobs use a lower level: {0}.", R.relaxed.map((x) => N.job(x)).join(", "))}</div>` : "")
         : R.over > 0 ? `<div class="warn">${T("This roster needs {0} Aniimo; you have {1} for production.", R.total, R.slots)}</div>` : "";
       return over + `<div class="hint adv" style="margin-top:6px"><b>${T("{0}: {1} Aniimo.", title || T("Suggested roster"), R.total)}</b> ${T("Click a column to sort.")}</div>
-        <table class="sortable"><thead><tr><th data-type="text">${T("Aniimo")}</th><th class="simple-only" data-type="text">${T("Put it on")}</th>
+        <table class="sortable roster-table"><thead><tr><th data-type="text">${T("Aniimo")}</th><th class="simple-only" data-type="text">${T("Put it on")}</th>
         <th class="adv" data-type="num">${T("Jobs it can do")}</th><th class="adv" data-type="num">${T("Works on")}</th>
         <th class="adv" data-type="num">${T("Ideal personality")}</th><th class="adv" data-type="num">${T("Alternatives")}</th></tr></thead><tbody>${rows}</tbody></table>`
         + (R.uncovered.length ? `<div class="warn">${T("No Aniimo can do: {0}", R.uncovered.map(N.job).join(", "))}</div>` : "");

@@ -183,6 +183,9 @@
       "Não coube no desenho: {0}. O alcance que você informou é maior do que cabe em volta de um dispositivo.",
     "Plot counts rounded for the drawing.": "Quantidade de lotes arredondada para o desenho.",
     "No room left in this area for: {0}.": "Não sobrou espaço nesta área para: {0}.",
+    "{0}: the game asks for {1}, but you can ignore it. Its timer is the same with or without a {2}.":
+      "{0}: o jogo pede {1}, mas você pode ignorar. O tempo é o mesmo com ou sem {2}.",
+    "What makes it faster is an Aniimo with the {0} personality.": "O que deixa mais rápido é um Aniimo com a personalidade {0}.",
     "Everything the plan uses, placed on your open plots: nothing overlaps, each climate plot is under its own device only, E-mode machines are on the power network, and the facilities one Aniimo works and the Storage Units are kept close to cut walking. One good arrangement, not the only one; the plan's numbers do not depend on it.":
       "Tudo o que o plano usa, posicionado nos seus terrenos abertos: nada se sobrepõe, cada lote com clima fica só sob o seu dispositivo, as máquinas no Modo E ficam na rede de energia, e as instalações de um mesmo Aniimo e os Depósitos ficam perto para reduzir a caminhada. Uma boa disposição, não a única; os números do plano não dependem dela.",
     "Device areas": "Áreas dos dispositivos",

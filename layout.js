@@ -21,7 +21,17 @@
   // Windmill was missing here and the map kept it away from every device (user, 2026-10-10).
   // Exact packing (tools/pack-patterns.js): a 5x5 pen around a device takes exactly the room of one Woodland.
   const PENS = ["Starfall Hammock", "Tidewhisper Sandcastle", "Floral Windmill"];
-  const MAX_PENS = 2;                              // per device in PATTERNS (the game allows 2 Hammocks at most)
+  // A pen the drawing puts under NO device, whatever its recipe asks for. The Starfall Hammock (user, 2026-10-10):
+  // he read Star's timer in game with and without a Cooling Unit, 25:00 both ways with the F personality (30:00 and
+  // 18:45 both ways on two other Stellarys on 2026-10-02), and a friend's reads 30:00 WITH the cooler and no
+  // personality bonus. So he asked for the drawing to stop sending players to a cooler and for the page to say
+  // the personality is what counts (wishesIgnored, below). What is NOT known: the game's % label does move (96%
+  // -> 120%), its code multiplies the work rate by 0.8 without the cooler, and the countdown he read is computed
+  // by the client without that factor (HomelandFacilityInfoCtrl.lua 1196 against 1370, builds 3634150 and
+  // 3668494), so the server may still slow it. Whoever times a whole Star cycle with a clock settles it.
+  // The Sandcastle's Pearl (Warm +1) has the same kind of wish and was never timed: left as it was.
+  const NO_DEVICE = ["Starfall Hammock"];
+  const MAX_PENS = 2;                              // per device in PATTERNS (set when the Hammock was packed here: the game allows 2 of those)
 
   // Best arrangement per device size, pen count p (0..2) and Woodland count k (p + k <= 8): top-left squares of
   // each pen (P), Woodland (W) and Farmland (F), the device on [0, s) x [0, s). Nearest the device first, so a
@@ -203,10 +213,23 @@
   function pensOf(plan, D) {
     const out = [];
     for (const m of machines(plan)) {
-      if (!PENS.includes(m.facility)) continue;
+      if (!PENS.includes(m.facility) || NO_DEVICE.includes(m.facility)) continue;
       const r = D && D.recipes.find((x) => x.id === m.recipeId);
       if (!r || (r.temp == null && !r.light)) continue;
       out.push({ facility: m.facility, recipeId: m.recipeId, temp: r.temp, light: !!r.light });
+    }
+    return out;
+  }
+  // The NO_DEVICE pens this plan runs on a recipe that asks for a temperature, once per facility, for the page to
+  // say so: { facility, recipeId, setting: what the game asks for, device: what would give it }
+  function wishesIgnored(plan, D) {
+    const out = [];
+    for (const m of machines(plan)) {
+      if (!NO_DEVICE.includes(m.facility) || out.some((o) => o.facility === m.facility)) continue;
+      const r = D && D.recipes.find((x) => x.id === m.recipeId);
+      if (!r || r.temp == null) continue;
+      out.push({ facility: m.facility, recipeId: m.recipeId, setting: Object.keys(SETTING_TEMP).find((s) => SETTING_TEMP[s] === r.temp),
+        device: r.temp < 0 ? "Cooling Unit" : "Heat Furnace" });
     }
     return out;
   }
@@ -307,6 +330,6 @@
     return plotsOf(plan && plan.lines, null);
   }
 
-  const api = { FOOTPRINT, AREA, PENS, PATTERNS, sizeOf, maxFarmland, areaOf, split, deviceLayouts, openPlots, machines };
+  const api = { FOOTPRINT, AREA, PENS, NO_DEVICE, PATTERNS, sizeOf, maxFarmland, areaOf, split, deviceLayouts, openPlots, machines, wishesIgnored };
   if (typeof module !== "undefined") module.exports = api; else root.Layout = api;
 })(this);

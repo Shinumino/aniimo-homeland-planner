@@ -116,6 +116,7 @@
   .lay-chip { display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; font-size: 13px; }
   .lay-chip img.ico { width: 20px; height: 20px; margin-right: 0; }
   .lay-sub { font-size: 12px; font-weight: 600; color: var(--muted); margin: 10px 0 2px; }
+  .lay-note { margin: 10px 0 0; }
   /* full base map (homemap.js): 80 x 60 tiles */
   .map-wrap { border: 1px solid var(--line); border-radius: 8px; padding: 6px; margin: 8px 0; }
   .map-wrap svg { display: block; width: 100%; height: auto; }
@@ -997,7 +998,7 @@
       + (ICONS[key] ? `<image href="icons/${key}.png" x="${x}" y="${y}" width="${s}" height="${s}"/>`
         : `<text class="lay-tag" x="${x + s / 2}" y="${y + s / 2}">${label.slice(0, 2)}</text>`);
     for (const q of z.plots) {
-      // a pen (Starfall Hammock, Tidewhisper Sandcastle) shows its own picture, with what it makes in a corner
+      // a pen (Tidewhisper Sandcastle, Floral Windmill) shows its own picture, with what it makes in a corner
       const item = cropOf(q), pen = window.Layout.PENS.includes(q.facility), pad = q.size * 0.14, s = q.size - 2 * pad;
       const cls2 = pen ? "lay-pen" : q.facility === "Woodland" ? "lay-wood" : "lay-soil";
       g += `<g><title>${N.fac(q.facility)}: ${N.item(item)}</title>`
@@ -1050,6 +1051,15 @@
     if (facs.size) html += `<div class="lay-sub">${T("Other facilities: their position does not change the plan")}</div><div class="lay-chips">`
       + [...facs].sort((x, y) => N.fac(x[0]).localeCompare(N.fac(y[0]))).map(([f, m]) => `<span class="lay-chip">${facIco(f)}<b>${N.fac(f)}</b>`
         + [...m].map(([i, n]) => ` ${itemIco(i)}${N.item(i)}${n > 1 ? " ×" + n : ""}`).join(" ·") + `</span>`).join("") + `</div>`;
+    // A pen whose temperature wish the drawing leaves alone (layout.js NO_DEVICE: the Starfall Hammock). The game
+    // shows that wish on the facility, so the page says it can be ignored and what does count (user, 2026-10-10:
+    // "put a warning"). It claims only what he read in game, the timer; why not more is in layout.js.
+    for (const w of window.Layout ? window.Layout.wishesIgnored(p, D) : []) {
+      const letter = D.facilities[w.facility] && D.facilities[w.facility].mbti;
+      html += `<div class="warn lay-note">${facIco(w.facility)}`
+        + T("{0}: the game asks for {1}, but you can ignore it. Its timer is the same with or without a {2}.", N.fac(w.facility), T(w.setting), N.fac(w.device))
+        + (letter ? " " + T("What makes it faster is an Aniimo with the {0} personality.", letter) : "") + `</div>`;
+    }
     $("layoutOut").innerHTML = html;
   }
 

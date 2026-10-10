@@ -45,6 +45,9 @@ your browser. The website counts visits anonymously with [GoatCounter](https://w
   everything the plan uses placed on your open plots. Plots sit under the right device, E-mode machines are on
   the power network, and Storage Units are close to what fills them. It has a grid (one square is one tile) and a
   legend. Click "Base layout" to open it: it stays closed until you do, so the page stays light.
+- Base layout: the Starfall Hammock is no longer placed beside a Cooling Unit. The game asks for Cool -1 on it,
+  but its timer is the same with or without one. An Aniimo with the F personality is what makes it faster, and
+  the panel now says so.
 - The page opens faster on phones: it no longer freezes for about a second while it gets ready.
 - "Plan for the fastest upgrade": if the page has to use its backup calculator and cannot plan the upgrade, it
   now shows the plan for the most coin and says so. Before, it could show wrong numbers.

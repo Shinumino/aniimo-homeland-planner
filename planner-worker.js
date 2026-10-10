@@ -12,7 +12,10 @@ self.__highsTimeLimit = 30;                        // read by planner.js solveHi
 importScripts("data.js", "lp.js", "planner.js", "layout.js", "homemap.js", "vendor/highs.js", "vendor/highs-wasm.js");
 const D = self.ANIIMO_DATA, P = self.Planner;
 const ready = new Promise((resolve, reject) => {
-  const bin = Uint8Array.from(atob(self.HIGHS_WASM_B64), (c) => c.charCodeAt(0));
+  // a loop, not Uint8Array.from(text, fn): 4.7 million calls of fn held the first plan back by 0.6 s on a
+  // mid-range phone (626 ms against 28 ms, measured 2026-10-10; the page does the same in index.html)
+  const packed = atob(self.HIGHS_WASM_B64), bin = new Uint8Array(packed.length);
+  for (let i = 0; i < packed.length; i++) bin[i] = packed.charCodeAt(i);
   Promise.resolve(self.Module({ instantiateWasm: (imports, done) => {
     WebAssembly.instantiate(bin, imports).then((r) => done(r.instance), reject); return {}; } })).then(resolve, reject);
 }).then((h) => P.useSolver(h), () => P.useSolver(null));

@@ -491,9 +491,23 @@
       return Object.assign(p, { fastRv: { level: chain.level, reachable: false } });
     }
     const p = planCore(D, Object.assign({}, userInputs, { _rv: Object.assign({}, rv, { min: t * 0.999 }) }));
+    // The first step plans the speed alone: its buys and sells cost nothing, so it is not a plan to show. When
+    // the second step failed, the first one WAS shown: on the built-in solver an RV 12 setup read 25,776 coin/h
+    // with 3,892 Rice Seed bought an hour that no line used, and no warning (Fable, numeric pass 2026-10-10;
+    // tests/fallback.test.mjs). The plan for the most coin goes out instead, and says so.
+    if (p.status !== "optimal") {
+      const coin = planCore(D, userInputs);
+      const timedOut = p.status === "time_limit";
+      // When even that one is no plan it keeps its own words: "this is the plan for the most coin" under "No plan"
+      // would be false (Fable, round 2; no test, no setup found where the speed plans and the coin does not).
+      if (coin.status === "optimal") coin.warnings = (coin.warnings || []).filter((w) => !/^No plan found within/.test(w))
+        .concat(timedOut ? "No plan found within " + timeLimit() + " s. Try fewer options or a smaller layout."
+          : "The fastest upgrade could not be planned: this is the plan for the most coin.");
+      return Object.assign(coin, { fastRv: Object.assign({ level: chain.level, reachable: false }, timedOut ? { timedOut: true } : { failed: true }) });
+    }
     if (fastest.capped) p.capped = true;         // either step at the time cap: not proven best
-    const rate = p.status === "optimal" ? p.rvRate : t;
-    return Object.assign(p.status === "optimal" ? p : fastest, { fastRv: { level: chain.level, reachable: true, rate,
+    const rate = p.rvRate;
+    return Object.assign(p, { fastRv: { level: chain.level, reachable: true, rate,
       readyHours: 1 / rate, upgradeHours: chain.secs / 3600, perHour: chain.mats.map(([i, n]) => [i, n * rate]),
       coinForUpgrade: rv.coin * rate } });
   }

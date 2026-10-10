@@ -41,6 +41,13 @@ your browser. The website counts visits anonymously with [GoatCounter](https://w
 
 **October 2026**
 
+- **Base layout** (Advanced mode), by [Dan-801](https://github.com/Dan-801): a map of your homeland with
+  everything the plan uses placed on your open plots. Plots sit under the right device, E-mode machines are on
+  the power network, and Storage Units are close to what fills them. It has a grid (one square is one tile) and a
+  legend. Click "Base layout" to open it: it stays closed until you do, so the page stays light.
+- The page opens faster on phones: it no longer freezes for about a second while it gets ready.
+- "Plan for the fastest upgrade": if the page has to use its backup calculator and cannot plan the upgrade, it
+  now shows the plan for the most coin and says so. Before, it could show wrong numbers.
 - Facilities you set to keep an Aniimo full time: a full-time bench must never run out of ingredients. The
   page now says so under that list, and when unticking a bench would earn more, it names that bench.
   "Plan for the fastest upgrade" now names the full-time benches that block the upgrade instead of saying

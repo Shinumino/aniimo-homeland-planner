@@ -3,7 +3,7 @@
 // Pure functions, no DOM, like planner.js: the page draws what deviceLayouts() returns, tests run it under Node.
 // Only the device areas are drawn to scale: they are the one place where position changes the numbers (a crop,
 // or a pen with a climate recipe, works at its temperature only inside a device's 9x9 area). The rest of the
-// home has no positions here yet; FOOTPRINT is where the other sizes go, for a full home map.
+// home is placed by homemap.js, which has every facility's size; FOOTPRINT here is only what a device area holds.
 //
 // What is drawn is ONE valid arrangement (the best packing, plots nearest the device), not the player's own:
 // any arrangement with the same plots under the device gives the same plan.
@@ -11,12 +11,16 @@
   // Size in squares (aniimo.gg Size / wikily.gg Footprint, same at every level; planner.js COVER for the first
   // five); the device area is 9 x 9 at every level
   const FOOTPRINT = { Farmland: 2, Woodland: 4, "Heat Furnace": 1, Sunlamp: 1, "Cooling Unit": 2,
-    "Starfall Hammock": 5, "Tidewhisper Sandcastle": 5 };
+    "Starfall Hammock": 5, "Tidewhisper Sandcastle": 5, "Floral Windmill": 5 };
   const AREA = 9;
   const PLOTS = ["Woodland", "Farmland"];
-  // Pens with a climate recipe (Starfall Hammock: Star wants Cool -1; Tidewhisper Sandcastle: Pearl wants Warm +1), 5x5.
+  // Pens with a climate recipe, all 5x5: Starfall Hammock (Star wants Cool -1), Tidewhisper Sandcastle (Pearl wants
+  // Warm +1) and Floral Windmill (Scales want light, and "forced": by the game's code it does not work without
+  // it). These three are every facility besides Farmland and Woodland with such a recipe (homeland_formula_data,
+  // build 3634150), and for each the climate applies to the pen's one operation, the Aniimo's own work. The
+  // Windmill was missing here and the map kept it away from every device (user, 2026-10-10).
   // Exact packing (tools/pack-patterns.js): a 5x5 pen around a device takes exactly the room of one Woodland.
-  const PENS = ["Starfall Hammock", "Tidewhisper Sandcastle"];
+  const PENS = ["Starfall Hammock", "Tidewhisper Sandcastle", "Floral Windmill"];
   const MAX_PENS = 2;                              // per device in PATTERNS (the game allows 2 Hammocks at most)
 
   // Best arrangement per device size, pen count p (0..2) and Woodland count k (p + k <= 8): top-left squares of
@@ -185,7 +189,7 @@
       if (l.kind !== "crop" || !PLOTS.includes(l.facility) || (l.zone || null) !== zoneName) continue;
       const n = Math.round(l.count);
       if (Math.abs(n - l.count) > 0.01) approx = true;
-      if (n > 0) out.push({ facility: l.facility, recipeId: l.recipeId, count: n });
+      if (n > 0 && Number.isFinite(n)) out.push({ facility: l.facility, recipeId: l.recipeId, count: n });   // every count here is looped over
     }
     return { plots: out, approx };
   }
@@ -194,14 +198,53 @@
   // device with exactly that temperature, where they work at full speed. Drawing only: the plan's numbers do not
   // change (user, 2026-10-09: "only the layout, no change to coin/h or production").
   const SETTING_TEMP = { "Warm +1": 1, "Scorching +2": 2, "Cool -1": -1, "Cold -2": -2 };
+  // does this device setting give the pen what its recipe asks for? Light comes from a Sunlamp only.
+  const suits = (d, pen) => (pen.light ? d.facility === "Sunlamp" : SETTING_TEMP[d.setting] === pen.temp);
   function pensOf(plan, D) {
     const out = [];
+    for (const m of machines(plan)) {
+      if (!PENS.includes(m.facility)) continue;
+      const r = D && D.recipes.find((x) => x.id === m.recipeId);
+      if (!r || (r.temp == null && !r.light)) continue;
+      out.push({ facility: m.facility, recipeId: m.recipeId, temp: r.temp, light: !!r.light });
+    }
+    return out;
+  }
+
+  // The buildings of the plan's lines that are not crops, one entry each: { facility, recipeId, recipes, electric,
+  // lines: [[line, share of that line on this building]] }. A line with `benches` is that many buildings on one
+  // recipe. With "one recipe per bench" off a line has only its busy share (count 0.225, benches null): the
+  // shares of one facility are poured into ceil(their sum) buildings, so a bench two recipes share is ONE
+  // building that names both. The map gave every such line a building of its own: 1 Crafting Table owned, 2 drawn
+  // (ChatGPT + Gemini, audit 2026-10-10; tests/baselayout.test.mjs).
+  function machines(plan) {
+    const out = [], shared = new Map();
     for (const l of (plan && plan.lines) || []) {
-      if (!PENS.includes(l.facility)) continue;
-      const r = D && D.recipes.find((x) => x.id === l.recipeId);
-      if (!r || r.temp == null) continue;
-      const n = Math.round(l.benches != null ? l.benches : l.count);
-      for (let i = 0; i < n; i++) out.push({ facility: l.facility, recipeId: l.recipeId, temp: r.temp });
+      if (l.kind === "crop") continue;
+      if (l.benches != null) {
+        const n = Number.isFinite(l.benches) ? Math.round(l.benches) : 0;
+        for (let i = 0; i < n; i++) out.push({ facility: l.facility, recipeId: l.recipeId, recipes: [l.recipeId], electric: l.kind === "electric", lines: [[l, 1 / n]] });
+      } else if (l.count > 1e-6 && Number.isFinite(l.count)) {   // not a number fails the first, Infinity the second
+        if (!shared.has(l.facility)) shared.set(l.facility, []);
+        shared.get(l.facility).push(l);
+      }
+    }
+    for (const [facility, lines] of shared) {
+      const n = Math.max(1, Math.ceil(lines.reduce((a, l) => a + l.count, 0) - 1e-6));
+      const ms = [];
+      for (let i = 0; i < n; i++) ms.push({ facility, recipeId: null, recipes: [], electric: false, lines: [], room: 1 });
+      // biggest share first, into the building with the most room left: a building's first recipe is its main one
+      for (const l of lines.slice().sort((a, b) => b.count - a.count || a.recipeId - b.recipeId)) {
+        let left = l.count;
+        while (left > 1e-9) {
+          const m = ms.reduce((b, x) => (x.room > b.room + 1e-12 ? x : b), ms[0]);
+          const put = m.room > 1e-9 ? Math.min(left, m.room) : left;
+          m.lines.push([l, put / l.count]);
+          if (!m.recipes.includes(l.recipeId)) m.recipes.push(l.recipeId);
+          m.room -= put; left -= put;
+        }
+      }
+      for (const m of ms) if (m.recipes.length) { m.recipeId = m.recipes[0]; delete m.room; out.push(m); }
     }
     return out;
   }
@@ -219,7 +262,7 @@
       const total = (fac) => plots.filter((p) => p.facility === fac).reduce((a, p) => a + p.count, 0);
       const n = Math.max(1, d.place || 1);
       const mine = [];                             // pens that want this setting's temperature, not drawn yet
-      for (let i = pens.length - 1; i >= 0; i--) if (SETTING_TEMP[d.setting] === pens[i].temp) mine.unshift(pens.splice(i, 1)[0]);
+      for (let i = pens.length - 1; i >= 0; i--) if (suits(d, pens[i])) mine.unshift(pens.splice(i, 1)[0]);
       // as many of them as fit beside the plots: the plan's plots come first
       let p = mine.length, sp;
       for (; p >= 0; p--) {
@@ -264,6 +307,6 @@
     return plotsOf(plan && plan.lines, null);
   }
 
-  const api = { FOOTPRINT, AREA, PENS, PATTERNS, sizeOf, maxFarmland, areaOf, split, deviceLayouts, openPlots };
+  const api = { FOOTPRINT, AREA, PENS, PATTERNS, sizeOf, maxFarmland, areaOf, split, deviceLayouts, openPlots, machines };
   if (typeof module !== "undefined") module.exports = api; else root.Layout = api;
 })(this);

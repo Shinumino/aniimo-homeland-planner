@@ -108,6 +108,9 @@
   .lay-wood { fill: var(--wood); stroke: var(--wood-line); stroke-width: .07; }
   .lay-pen { fill: var(--pen); stroke: var(--pen-line); stroke-width: .07; }
   .lay-heat { fill: var(--heat); stroke: var(--heat); } .lay-cold { fill: var(--cold); stroke: var(--cold); } .lay-lamp { fill: var(--lamp); stroke: var(--lamp); }
+  /* A stroke with a colour and no width is 1 unit wide, and a unit here is a whole tile: a 1 x 1 Heat Furnace was
+     painted 2 x 2, over the corners of the plots beside it (seen on the screenshots, 2026-10-10). */
+  .lay-heat, .lay-cold, .lay-lamp { stroke-width: .08; }
   .lay-tag { font-size: .9px; font-weight: 600; fill: var(--ink); text-anchor: middle; dominant-baseline: central; }
   .lay-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 10px; }
   .lay-chip { display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; font-size: 13px; }
@@ -124,6 +127,18 @@
   .map-power { fill: none; stroke: var(--lamp); stroke-width: .07; stroke-dasharray: .25 .2; }
   .map-gen { fill: var(--lamp); stroke: var(--lamp); stroke-width: .05; }
   .map-bolt { fill: var(--lamp); }
+  /* one line a tile, a darker one every 5: the sizes can be read off it (user, 2026-10-10) */
+  .map-grid { stroke: var(--grid); stroke-width: .03; } .map-grid5 { stroke: var(--line-row); stroke-width: .05; }
+  .map-legend { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px 14px; margin: 0 2px 6px; font-size: 12px; color: var(--muted); }
+  .map-legend > span { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+  .map-legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; border: 1px solid; }
+  .sw-soil { background: var(--soil); border-color: var(--soil-line); } .sw-wood { background: var(--wood); border-color: var(--wood-line); }
+  .sw-pen { background: var(--pen); border-color: var(--pen-line); } .sw-fac { background: var(--accent-soft); border-color: var(--accent); }
+  .sw-store { background: var(--warn-soft); border-color: var(--warn); } .sw-gen { background: var(--lamp); border-color: var(--lamp); }
+  .map-legend i.sw-area { border: 1px dashed var(--heat); } .map-legend i.sw-power { border: 1px dashed var(--lamp); }
+  /* the panel is closed until asked for: its title is the thing to click */
+  #layoutDetails > summary { cursor: pointer; } #layoutDetails > summary h2 { display: inline; margin: 0 8px 0 0; }
+  #layoutDetails[open] > summary { margin-bottom: 8px; } #layoutDetails[open] > summary .hint { display: none; }
 </style>
 </head>
 <body>
@@ -269,12 +284,13 @@
     <div class="grid2">
       <section class="panel" id="devicesPanel"><h2>Environment devices to place</h2><table><tbody id="devicesOut"></tbody></table></section>
       <section class="panel" id="powerPanel"><h2>Power</h2><table><tbody id="powerOut"></tbody></table></section>
-      <section class="panel adv" id="layoutPanel" style="grid-column: 1 / -1"><h2>Base layout</h2>
+      <section class="panel adv" id="layoutPanel" style="grid-column: 1 / -1">
+        <details id="layoutDetails"><summary><h2>Base layout</h2><span class="hint">Map of where everything goes. Click to open.</span></summary>
         <div class="hint">Everything the plan uses, placed on your open plots: nothing overlaps, each climate plot is under its own device only, E-mode machines are on the power network, and the facilities one Aniimo works and the Storage Units are kept close to cut walking. One good arrangement, not the only one; the plan's numbers do not depend on it.</div>
         <div id="mapOut"></div>
         <div class="lay-sub">Device areas</div>
         <div class="hint">One arrangement that works: each device's area (dashed square) with the plots that must touch it. Any arrangement with the same plots touching the area gives the same plan. Keep the areas apart, so each plot is under one device.</div>
-        <div id="layoutOut"></div></section>
+        <div id="layoutOut"></div></details></section>
       <section class="panel adv"><h2>Sell per hour</h2><table><tbody id="sold"></tbody></table></section>
       <section class="panel" style="grid-column: 1 / -1"><h2><span class="adv">Suggested roster</span><span class="simple-only">Minimum roster</span></h2>
         <div class="hint adv">The fewest Aniimo that cover all the work. Full-time jobs get their own Aniimo; part-time jobs are
@@ -429,12 +445,56 @@
   // simple to see a simple interface but their config set").
   const MODE = "aniimo-planner-mode";
   let simple = (() => { try { return localStorage.getItem(MODE) !== "advanced"; } catch (e) { return true; } })();
+  // Base layout panel (pull request #1, Dan-801). It is closed on every visit and nothing of it is computed or
+  // drawn until it is opened (user, 2026-10-10: "always collapsed and used when needed"): placing the map takes
+  // the Worker 0.1 to 0.6 s after every plan on a fast PC, several times that on a phone, and the panel was 9 to
+  // 22% of the page's elements, rebuilt on each change. Open, it follows the plan on screen; closed again, its
+  // drawings are taken off the page.
+  //   shownPlan   the plan the page shows, or null under "No plan". Not lastPlan: that one keeps the last GOOD
+  //               plan, and its map came back under "No plan" on Simple -> Advanced (Fable + ChatGPT).
+  //   layoutBusy  from a new plan being asked for until its best case is back. The Worker takes one job at a
+  //               time and the best case is on every screen, so the map waits for it; a timer did that before
+  //               and an old plan's map could run ahead of the new best case (ChatGPT + Fable).
+  //   mapToken    a map that comes back for anything but the last request is dropped
+  let shownPlan = null, layoutBusy = false, mapToken = 0;
+  const layoutOpen = () => $("layoutDetails").open && !simple;
+  function clearLayout() { mapToken++; $("mapOut").textContent = ""; $("layoutOut").textContent = ""; }
+  function noLayout() { shownPlan = null; layoutBusy = false; clearLayout(); }
+  function drawLayout() {
+    if (!layoutOpen() || !shownPlan) { clearLayout(); return; }
+    renderLayout(shownPlan);
+    if (layoutBusy) { mapToken++; $("mapOut").innerHTML = `<div class="hint">${T("Placing everything on the map…")}</div>`; }
+    else requestMap(shownPlan);
+  }
+  // the best case of `plan` is back (or will not come): now the Worker is free for its map
+  // (and only the best case of the LAST request counts: on the page's thread, with no Worker to stop, an older
+  // one still comes back while the next plan is being made, the plan on screen is still its own, and its map went:
+  // best RV 11, plan RV 13, map RV 11; ChatGPT Sol, round 2)
+  function bestSettled(plan, token) {
+    if (plan !== shownPlan || token !== runToken) return;
+    layoutBusy = false;
+    if (layoutOpen()) requestMap(shownPlan);
+  }
+  function requestMap(p) {
+    const token = ++mapToken;
+    $("mapOut").innerHTML = `<div class="hint">${T("Placing everything on the map…")}</div>`;
+    // .catch, not a second argument to .then: a map that came back and could not be DRAWN threw past it and
+    // "Placing everything on the map…" stayed up for good (Gemini, round 2)
+    solve("map", { plan: p, unreleased: S.unreleased }, !!S.bestPrismana).then((m) => { if (token === mapToken) $("mapOut").innerHTML = mapHtml(m); })
+      .catch((err) => {                            // as text: this message went in as HTML, the plan's own error never did
+        if (token !== mapToken) return;
+        const box = document.createElement("div");
+        box.className = "warn"; box.textContent = String(err && err.message || err);
+        $("mapOut").replaceChildren(box);
+      });
+  }
+  $("layoutDetails").addEventListener("toggle", drawLayout);
+
   function setMode(m) {
-    const wasSimple = simple;
     simple = m === "simple";
     try { localStorage.setItem(MODE, simple ? "simple" : "advanced"); } catch (e) { /* private window */ }
     document.body.classList.toggle("simple", simple);
-    if (wasSimple && !simple && lastPlan && lastPlan.status === "optimal") renderMap(lastPlan);
+    drawLayout();                                  // Simple: taken off the page; Advanced: drawn if the panel is open
   }
 
   // no saved setup (first visit, Reset): RV 5 with everything it allows built and maxed (user, 2026-10-02;
@@ -638,6 +698,8 @@
       out += `<div class="warn" style="margin-top:8px">${N.msg(res.warnings.find((w) => /^No plan found within/.test(w)))}</div>`;
     } else if (f && f.fullTime) {                // the full-time ticks block the chain, not the layout
       out += `<div class="warn" style="margin-top:8px">${N.msg(res.warnings.find((w) => /^A full-time bench must never run out/.test(w)))}</div>`;
+    } else if (f && f.failed) {                  // the upgrade exists, its coin plan could not be made: not the layout's fault
+      out += `<div class="warn" style="margin-top:8px">${T("The fastest upgrade could not be planned: this is the plan for the most coin.")}</div>`;
     } else if (f) {
       out += `<div class="warn" style="margin-top:8px">${T("This layout cannot make the RV {0} materials.", f.level)}</div>`;
     }
@@ -744,7 +806,11 @@
   // 2026-10-02). Its rejection now rejects this promise, which lands in the built-in-solver catch below.
   const solverReady = (window.Module && window.HIGHS_WASM_B64
     ? new Promise((resolve, reject) => {
-        const bin = Uint8Array.from(atob(window.HIGHS_WASM_B64), (c) => c.charCodeAt(0));
+        // Uint8Array.from(text, fn) calls fn once per character: 4.7 million calls, 626 ms on a mid-range phone
+  // against 28 ms for this loop (measured 2026-10-10), on the page's thread at every load and again in the Worker
+  // before the first plan.
+        const packed = atob(window.HIGHS_WASM_B64), bin = new Uint8Array(packed.length);
+        for (let i = 0; i < packed.length; i++) bin[i] = packed.charCodeAt(i);
         Promise.resolve(window.Module({ instantiateWasm: (imports, done) => {
           WebAssembly.instantiate(bin, imports).then((r) => done(r.instance), reject); return {}; } })).then(resolve, reject);
       }).then((h) => P.useSolver(h))
@@ -815,9 +881,10 @@
     const t0 = performance.now();
     const token = ++runToken;
     cancelSolves();
+    mapToken++; layoutBusy = true;                // a map on its way is for the old plan; the next waits for the new best case
     $("subline").textContent = T("Planning…");
     solve("plan", inp).then((p) => { if (token === runToken) show(inp, p, performance.now() - t0); },
-      (err) => { if (token === runToken) { $("headline").textContent = T("No plan"); $("subline").textContent = String(err && err.message || err); mapToken++; $("mapOut").innerHTML = ""; } });
+      (err) => { if (token === runToken) { $("headline").textContent = T("No plan"); $("subline").textContent = String(err && err.message || err); noLayout(); } });
   }
 
   function show(inp, p, ms) {
@@ -831,9 +898,9 @@
     if (p.status !== "optimal") {
       $("headline").textContent = T("No plan");
       $("subline").textContent = T(p.status);
-      for (const id of ["lines", "sold", "eaten", "bought", "devicesOut", "powerOut", "layoutOut", "mapOut", "roster", "best", "planTotal", "byHand"]) $(id).innerHTML = "";
+      for (const id of ["lines", "sold", "eaten", "bought", "devicesOut", "powerOut", "roster", "best", "planTotal", "byHand"]) $(id).innerHTML = "";
       $("devicesPanel").classList.add("nothing"); $("powerPanel").classList.add("nothing");
-      mapToken++;                                  // a map still being placed for the last plan is dropped
+      noLayout();                                  // no plan on screen: no map of one, now or when the panel opens
       // the headline is hidden in simple mode: the same words go above the warnings there (Fable review #1)
       $("warnings").insertAdjacentHTML("afterbegin", `<div class="warn simple-only"><b>${T("No plan")}</b> · ${T(p.status)}</div>`);
       $("budget").innerHTML = "";
@@ -904,16 +971,16 @@
           <div class="hint simple-only">${T("Do not add more machines: it slows all of them.")}${pw.generators > 1 ? " " + T("Link the generators into one network with power poles.") : ""}</div></td>
         <td class="muted adv">${N.job(pw.worker)}</td></tr>`;
     $("powerPanel").classList.toggle("nothing", !(pw && pw.generators));
-    renderLayout(p);
-    renderMap(p);
     lastPlan = p;
     renderRvInfo(p);
     renderRest(p);
+    shownPlan = p; layoutBusy = true;             // renderRest asks for the best case; the map comes after it
+    drawLayout();
   }
 
-  // Base layout (user, 2026-10-09: "a 2D plan with where the machines go"). Each device placed is drawn to
-  // scale with its plots (layout.js); plots under no device and the other facilities are lists, since the game
-  // data here has no home map and no sizes for benches, Mines or pens. Their position does not change the plan.
+  // Base layout (Dan-801, 2026-10-09: "a 2D plan with where the machines go"). Under the map, each device placed
+  // is drawn to scale with its plots (layout.js), then the plots under no device and what the other facilities
+  // are set to, as lists. Their position does not change the plan.
   const LAY_DEVICE = { "Heat Furnace": "lay-heat", "Cooling Unit": "lay-cold", Sunlamp: "lay-lamp" };
   const cropOf = (q) => recipeOf(q.recipeId).out[0][0];
   function zoneSvg(z) {
@@ -986,18 +1053,7 @@
     $("layoutOut").innerHTML = html;
   }
 
-  // Full base map (homemap.js), placed in the Worker like the plans: a few seconds at high RV
-  let mapToken = 0;
-  function renderMap(p) {
-    const token = ++mapToken;
-    if (simple) { $("mapOut").innerHTML = ""; return; }   // drawn when Advanced mode opens (setMode)
-    $("mapOut").innerHTML = `<div class="hint">${T("Placing everything on the map…")}</div>`;
-    // after the best-case plan, which the page asks for 30 ms later: the Worker takes one job at a time
-    setTimeout(() => { if (token !== mapToken) return;
-    solve("map", { plan: p, unreleased: S.unreleased }, !!S.bestPrismana).then((m) => { if (token === mapToken) $("mapOut").innerHTML = mapHtml(m); },
-      (err) => { if (token === mapToken) $("mapOut").innerHTML = `<div class="warn">${String(err && err.message || err)}</div>`; });
-    }, 120);
-  }
+  // Full base map (homemap.js), placed in the Worker like the plans; asked for by requestMap, above
   function mapHtml(m) {
     const facKey = (f) => (D.facilities[f] ? "facility_" + D.facilities[f].id : null);
     const img = (key, x, y, s) => !key || !ICONS[key] ? ""
@@ -1009,6 +1065,9 @@
       g += `<rect class="${open ? "map-land" : "map-locked"}" x="${x}" y="${y}" width="20" height="15"/>`
         + `<text class="map-plotno" x="${x + 0.6}" y="${y + 1.8}">${open ? n : T("RV {0}", n)}</text>`;
     }
+    const land = g;
+    g = "";
+    const side = (v) => String(Math.round(v * 100) / 100);
     // device and power areas under everything
     for (const it of m.items) if (it.area) {
       const cls = it.type === "device" ? "lay-area " + (LAY_DEVICE[it.facility] || "lay-heat") : "map-power";
@@ -1016,7 +1075,10 @@
     }
     for (const it of m.items) {
       const item = it.recipeId != null && recipeOf(it.recipeId) ? recipeOf(it.recipeId).out[0][0] : null;
-      const name = (it.type === "storage" ? T("Storage Unit") : N.fac(it.facility)) + (item ? ": " + N.item(item) : "") + (it.electric ? " (" + T("E-mode") + ")" : "");
+      // a bench two recipes share (one recipe per bench off) is one building: its name says both
+      const makes = (it.recipes && it.recipes.length > 1 ? it.recipes : it.recipeId != null ? [it.recipeId] : []).map((r) => recipeOf(r)).filter(Boolean).map((r) => N.item(r.out[0][0]));
+      const name = (it.type === "storage" ? T("Storage Unit") : N.fac(it.facility)) + (makes.length ? ": " + makes.join(" + ") : "") + (it.electric ? " (" + T("E-mode") + ")" : "")
+        + " · " + side(it.w) + " × " + side(it.h);
       const s = Math.min(it.w, it.h), pad = s * 0.12, is = s - 2 * pad;
       const cls = it.type === "plot" ? (it.facility === "Woodland" ? "lay-wood" : "lay-soil") : it.type === "pen" ? "lay-pen"
         : it.type === "device" ? LAY_DEVICE[it.facility] || "lay-heat" : it.type === "storage" ? "map-store"
@@ -1036,16 +1098,42 @@
     // framed on the open plots (the closed ones inside that frame stay visible, dashed)
     const fx0 = Math.min(...m.plots.map((q) => q.x)), fy0 = Math.min(...m.plots.map((q) => q.y));
     const fx1 = Math.max(...m.plots.map((q) => q.x + q.w)), fy1 = Math.max(...m.plots.map((q) => q.y + q.h));
-    let out = `<div class="map-wrap"><svg viewBox="${fx0 - 0.3} ${fy0 - 0.3} ${fx1 - fx0 + 0.6} ${fy1 - fy0 + 0.6}" role="img" aria-label="${T("Base layout")}">${g}</svg></div>`;
-    const maxStore = window.HomeMap.STORAGE_MAX[Math.min(20, Math.max(1, m.rv)) - 1];
-    const notes = [T("{0} open plots of 20 × 15 (RV {1}).", m.plots.length, m.rv),
-      count("storage") >= maxStore ? T("{0} Storage Units (the most RV {1} allows).", count("storage"), m.rv)
-        : T("{0} Storage Units: RV {1} allows {2}, but there is no room for more.", count("storage"), m.rv, maxStore)];
+    // a line a tile over the frame, a darker one every 5, under everything placed (user, 2026-10-10: "a better
+    // grid to understand better the size of stuff")
+    let grid = "";
+    for (let x = Math.ceil(fx0); x <= fx1; x++) grid += `<line class="${x % 5 ? "map-grid" : "map-grid5"}" x1="${x}" y1="${fy0}" x2="${x}" y2="${fy1}"/>`;
+    for (let y = Math.ceil(fy0); y <= fy1; y++) grid += `<line class="${y % 5 ? "map-grid" : "map-grid5"}" x1="${fx0}" y1="${y}" x2="${fx1}" y2="${y}"/>`;
+    // what is what, in the map's top right corner (user, 2026-10-10); only what this map has
+    const has = (f) => m.items.some(f);
+    const pens = [...new Set(m.items.filter((it) => it.type === "pen").map((it) => N.fac(it.facility)))];
+    const legend = [
+      has((it) => it.type === "plot" && it.facility === "Farmland") && `<i class="sw-soil"></i>${N.fac("Farmland")}`,
+      has((it) => it.type === "plot" && it.facility === "Woodland") && `<i class="sw-wood"></i>${N.fac("Woodland")}`,
+      pens.length && `<i class="sw-pen"></i>${pens.join(", ")}`,
+      has((it) => it.type === "facility") && `<i class="sw-fac"></i>${T("Other facilities")}`,
+      count("storage") && `<i class="sw-store"></i>${T("Storage Unit")}`,
+      count("device") && `<i class="sw-area"></i>${T("Device area")}`,
+      count("generator") && `<i class="sw-gen"></i>${T("Generator and poles")}`,
+      count("generator") && `<i class="sw-power"></i>${T("Power area")}`,
+      has((it) => it.electric) && `<svg width="9" height="13" viewBox="0 0 .8 1.6"><path class="map-bolt" d="M.55 .15l-.4 .75h.3l-.25 .65 .6-.85h-.3l.25-.55z"/></svg>${T("E-mode")}`,
+      T("1 square = 1 tile; darker lines every 5"),
+    ].filter(Boolean).map((x) => `<span>${x}</span>`).join("");
+    let out = `<div class="map-wrap"><div class="map-legend">${legend}</div><svg viewBox="${fx0 - 0.3} ${fy0 - 0.3} ${fx1 - fx0 + 0.6} ${fy1 - fy0 + 0.6}" role="img" aria-label="${T("Base layout")}">${land}${grid}${g}</svg></div>`;
+    const maxStore = window.HomeMap.STORAGE_MAX[Math.min(20, Math.max(1, m.rv)) - 1], stores = count("storage");
+    const notes = [T("{0} open plots of 20 × 15 (RV {1}).", m.plots.length, m.rv)];
+    // RV 1 has no Storage Unit to place: no sentence, where "0 Storage Units (the most RV 1 allows)" stood
+    if (maxStore) notes.push(stores >= maxStore
+      ? (stores === 1 ? T("1 Storage Unit (the most RV {0} allows).", m.rv) : T("{0} Storage Units (the most RV {1} allows).", stores, m.rv))
+      : (stores === 1 ? T("1 Storage Unit: RV {0} allows {1}, but there is no room for more.", m.rv, maxStore) : T("{0} Storage Units: RV {1} allows {2}, but there is no room for more.", stores, m.rv, maxStore)));
     if (count("pole")) notes.push(count("pole") === 1 ? T("1 power pole links the E-mode machines to the power network.") : T("{0} power poles link the E-mode machines to the power network.", count("pole")));
     if (m.walk && m.walk.haulMinPerHour != null) notes.push(T("Haulers walk about {0} min an hour to the nearest Storage Unit and back (Aniimo walk 3 tiles a second; a level-1 hauler carries 60 items a trip). For information only: the plan's numbers do not include it.", fmt(m.walk.haulMinPerHour, 1)));
     out += `<div class="hint">${notes.join(" ")}</div>`;
-    if (m.unplaced && m.unplaced.length) out += `<div class="warn">${T("Did not fit on the open land: {0}.", [...new Set(m.unplaced.flatMap((u) => (u.members ? u.members.map((x) => x.facility) : [u.facility])).filter(Boolean))].map((f) => N.fac(f)).join(", "))}</div>`;
-    if (m.unpowered && m.unpowered.length) out += `<div class="warn">${T("{0} E-mode machines could not be linked to the power network with the poles this RV allows.", m.unpowered.length)}</div>`;
+    const names = (list) => [...new Set(list.flatMap((u) => (u.members ? u.members.map((x) => x.facility) : [u.facility])).filter(Boolean))].map((f) => N.fac(f)).join(", ");
+    const sizeless = (m.unplaced || []).filter((u) => u.reason === "size"), unfit = (m.unplaced || []).filter((u) => u.reason !== "size");
+    if (unfit.length) out += `<div class="warn">${T("Did not fit on the open land: {0}.", names(unfit))}</div>`;
+    if (sizeless.length) out += `<div class="warn">${T("No size known for: {0}.", names(sizeless))}</div>`;
+    if (m.unpowered && m.unpowered.length) out += `<div class="warn">${m.unpowered.length === 1 ? T("1 E-mode machine could not be linked to the power network with the poles this RV allows.")
+      : T("{0} E-mode machines could not be linked to the power network with the poles this RV allows.", m.unpowered.length)}</div>`;
     return out;
   }
 
@@ -1229,12 +1317,13 @@
   // Best case (user request): the same layout if every job had the best Aniimo in the game for it.
   let lastInputs = null;
   function renderBest(current) {
-    if (!lastInputs) return;
+    if (!lastInputs) { bestSettled(current, runToken); return; }
     const token = runToken;
     $("best").innerHTML = `<div class="muted">${T("Planning…")}</div>`;
     solve("best", lastInputs, !!S.bestPrismana).then((b) => { if (token === runToken) showBest(current, b); },
       // a best case that fails in the Worker left "Planning…" up until the next change (Fable, pre-release audit)
-      (err) => { if (token === runToken) $("best").innerHTML = `<div class="muted">${T("No best-case plan: {0}", T("error"))}</div>`; });
+      (err) => { if (token === runToken) $("best").innerHTML = `<div class="muted">${T("No best-case plan: {0}", T("error"))}</div>`; })
+      .then(() => bestSettled(current, token), () => bestSettled(current, token));   // either way the Worker is free: the Base layout map may go
   }
   function showBest(current, b) {
     if (b.status !== "optimal") { $("best").innerHTML = `<div class="muted">${T("No best-case plan: {0}", T(b.status))}</div>`; return; }

@@ -119,6 +119,12 @@
     // device areas, as layout.js draws them (plots and climate pens)
     const cards = Layout.deviceLayouts(plan, D);
     const drawnPens = new Map(), overflow = [];
+    // A facility with no size in SIZE is reported, never drawn at a guess: a crop threw, anything else was drawn
+    // 2 x 2 without a word (all three reviewers, 2026-10-10). Every facility in today's data.js has a size.
+    const noSize = (facility, recipeId, count) => {
+      const o = overflow.find((x) => x.reason === "size" && x.facility === facility);
+      if (o) o.count += count; else overflow.push({ facility, recipeId, count, reason: "size" });
+    };
     cards.forEach((c, g) => {
       for (const o of c.overflow) overflow.push({ facility: o.facility, recipeId: o.recipeId, count: o.count, reason: "device" });
       const members = [{ type: "device", facility: c.facility, setting: c.setting, x: 0, y: 0, w: c.size, h: c.size }];
@@ -147,28 +153,28 @@
     for (const l of lines) {
       if (l.kind !== "crop" || l.zone) continue;
       const n = Math.round(l.count);
-      if (n <= 0) continue;
+      if (!(n > 0) || !Number.isFinite(n)) continue;   // 0, negative or not a number: an empty block scanned for ever; Infinity: plots without end
+      if (!SIZE[l.facility]) { noSize(l.facility, l.recipeId, n); continue; }
       const s = SIZE[l.facility][0], cols = Math.ceil(Math.sqrt(n)), members = [];
       for (let k = 0; k < n; k++) members.push({ type: "plot", facility: l.facility, recipeId: l.recipeId, x: (k % cols) * s, y: Math.floor(k / cols) * s, w: s, h: s, haul: outPerHour(l, n) });
       out.push({ kind: "block", members, step: 1, split: true });
     }
-    // every other facility the plan sets, one unit per machine
-    for (const l of lines) {
-      if (l.kind === "crop") continue;
-      let n = Math.round(l.benches != null ? l.benches : Math.ceil(l.count - 1e-6));
-      const key = l.facility + "|" + l.recipeId;
-      const drawn = Math.min(n, drawnPens.get(key) || 0);
-      if (drawn) drawnPens.set(key, (drawnPens.get(key) || 0) - drawn);
-      n -= drawn;
-      const sz = SIZE[l.facility] || [2, 2];
-      for (let k = 0; k < n; k++) {
-        out.push({ kind: "single", type: Layout.PENS.includes(l.facility) ? "pen" : "facility", facility: l.facility, recipeId: l.recipeId,
-          w: sz[0], h: sz[1], electric: l.kind === "electric", haul: outPerHour(l, n + drawn) });
-      }
+    // every other facility the plan sets, one unit per BUILDING (Layout.machines: a bench two recipes share is one)
+    const withRecipe = new Map(lines.map((l) => [l.recipeId + "|" + l.facility + "|" + l.kind, l]));
+    for (const m of Layout.machines(plan)) {
+      const key = m.facility + "|" + m.recipeId;
+      if (drawnPens.get(key) > 0) { drawnPens.set(key, drawnPens.get(key) - 1); continue; }   // already in a device's block
+      const sz = SIZE[m.facility];
+      if (!sz) { noSize(m.facility, m.recipeId, 1); continue; }
+      // what leaves this building an hour: each line's output times its share here
+      const haul = m.lines.reduce((a, [l, share]) => a + outPerHour(withRecipe.get(l.recipeId + "|" + l.facility + "|" + l.kind) || l, 1) * share, 0);
+      out.push({ kind: "single", type: Layout.PENS.includes(m.facility) ? "pen" : "facility", facility: m.facility, recipeId: m.recipeId,
+        recipes: m.recipes, w: sz[0], h: sz[1], electric: m.electric, haul });
     }
     for (const h of plan.byHand || []) {
-      const sz = SIZE[h.facility] || [2, 2];
-      out.push({ kind: "single", type: "facility", facility: h.facility, recipeId: h.recipeId, w: sz[0], h: sz[1], electric: h.mode === "E-mode", haul: 0 });
+      const sz = SIZE[h.facility];
+      if (!sz) { noSize(h.facility, h.recipeId, 1); continue; }
+      out.push({ kind: "single", type: "facility", facility: h.facility, recipeId: h.recipeId, recipes: [h.recipeId], w: sz[0], h: sz[1], electric: h.mode === "E-mode", haul: 0 });
     }
     out.overflow = overflow;
     return out;
@@ -226,6 +232,7 @@
       const step = stepOverride || u.step || 0.5;
       let best = null;
       if (u.kind === "block") {
+        if (!u.members.length) return null;        // Math.min() of nothing is Infinity: the scan below would never end
         const x0 = Math.min(...u.members.map((m) => m.x)), y0 = Math.min(...u.members.map((m) => m.y));
         const bw = Math.max(...u.members.map((m) => m.x + m.w)) - x0, bh = Math.max(...u.members.map((m) => m.y + m.h)) - y0;
         for (let y = 0; y + bh <= 60; y += step) for (let x = 0; x + bw <= 80; x += step) {
@@ -266,6 +273,7 @@
     const placeSingle = (u, spot) => {
       const it = { type: u.type, facility: u.facility, x: spot.x, y: spot.y, w: spot.w, h: spot.h };
       if (u.recipeId != null) it.recipeId = u.recipeId;
+      if (u.recipes) it.recipes = u.recipes;       // every recipe this building runs (more than one on a shared bench)
       if (u.electric) it.electric = true;
       if (u.haul) it.haul = u.haul;
       if (AREA[u.facility]) it.area = areaAround(it, AREA[u.facility]);
@@ -303,7 +311,7 @@
           const r = { x, y, w: 2, h: 2 };
           if (!fits(r, false) || !net.some((a) => overlaps(areaAround(r, AREA["Crackle Generator"]), a))) continue;
           const cost = costAt(ctx, centre(r), r);
-          if (!spot || cost < spot.cost) spot = { cost, x, y, w: 2, h: 2 };
+          if (!spot || cost < spot.cost - 1e-9) spot = { cost, x, y, w: 2, h: 2 };
         }
       }
       if (spot) placeSingle(u, spot); else unplaced.push(Object.assign(u, { reason: "power" }));
@@ -329,7 +337,7 @@
             const r = { x, y, w, h };
             if (!overlaps(r, a) || overlaps(r, pr) || !fits(r, false)) continue;
             const cost = costAt(ctx, centre(r), r);
-            if (!best || cost < best.cost) best = { cost, pole: { x: px, y: py, w: pw, h: pw }, spot: { x, y, w, h } };
+            if (!best || cost < best.cost - 1e-9) best = { cost, pole: { x: px, y: py, w: pw, h: pw }, spot: { x, y, w, h } };
           }
         }
       }
@@ -355,7 +363,7 @@
         const c = centre(r);
         let cost = 0.001 * dist(c, anchor);
         for (const [p, h, d] of hauled) cost += h * Math.min(d, dist(p, c));
-        if (!best || cost < best.cost) best = { cost, x, y };
+        if (!best || cost < best.cost - 1e-9) best = { cost, x, y };
       }
       if (!best) break;
       storages.push(put({ type: "storage", facility: "Storage Unit", x: best.x, y: best.y, w: 2, h: 2 }));
@@ -387,7 +395,7 @@
         const c = centre(r);
         let cost = 0.001 * dist(c, anchor);
         for (const [p, h, d] of hauled) cost += h * Math.min(d, dist(p, c));
-        if (!best || cost < best.cost) best = { cost, x, y };
+        if (!best || cost < best.cost - 1e-9) best = { cost, x, y };
       }
       return best;
     };
@@ -430,7 +438,7 @@
         if (!areas.some((b) => overlaps(a, b))) continue;
         const reach = off.filter((it) => overlaps(it, a)).length;
         const cost = -1000 * reach + Math.min(...off.map((it) => dist(centre(r), centre(it))));
-        if (!best || cost < best.cost) best = { cost, x, y };
+        if (!best || cost < best.cost - 1e-9) best = { cost, x, y };
       }
       if (!best) break;
       placeSingle({ type: "pole", facility: "Crackle Power Pole" }, { x: best.x, y: best.y, w: 1.5, h: 1.5 });

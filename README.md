@@ -74,8 +74,8 @@ your browser. The website counts visits anonymously with [GoatCounter](https://w
 ## Notes
 
 - The numbers (recipe times, workloads, prices, facility limits) were read from game build 3603741
-  and checked against the game where we could. Rechecked after the update to build 3634150: no homeland
-  numbers changed. A game update can change them.
+  and checked against the game where we could. Rechecked after the updates to builds 3634150 and 3668494
+  (9 October 2026): no homeland numbers changed. A game update can change them.
 - The item, facility and Aniimo icons are the game's own art and belong to its owners.
 - This is a fan-made tool. It is not affiliated with or endorsed by the makers of Aniimo.
 

@@ -9,16 +9,26 @@
     --bg: #f6f5f1; --panel: #ffffff; --ink: #1f2328; --muted: #6a6f76; --line: #e3e1da; --line-row: #c6c3ba;
     --accent: #2f7d5b; --accent-soft: #e3f1ea; --warn: #9a5b00; --warn-soft: #fff3dc; --bad: #b3261e;
     --bar1: #2f7d5b; --bar2: #5a8fd6; --bar3: #d6a23a; --bar4: #9b6ad6;
+    /* base layout drawing: plots, device bodies and their areas */
+    --soil: #e2cfae; --soil-line: #a8865a; --wood: #cfe2c2; --wood-line: #6f9a5c; --grid: #ebe8e0;
+    --pen: #e4dcf2; --pen-line: #8a74b8;
+    --heat: #d9622b; --cold: #3f86d1; --lamp: #c9a400;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
       --bg: #16181b; --panel: #1f2226; --ink: #e8e6e1; --muted: #9aa0a6; --line: #30343a; --line-row: #4a4f57;
       --accent: #5cc095; --accent-soft: #1f3a2f; --warn: #f0b451; --warn-soft: #3a2f1a; --bad: #ff8a80;
+      --soil: #4a3b2a; --soil-line: #8a6d4c; --wood: #2c4027; --wood-line: #5f8a52; --grid: #272a2f;
+      --pen: #352c48; --pen-line: #8f7bc0;
+      --heat: #f08a55; --cold: #6aa9ea; --lamp: #e8c84a;
     }
   }
   :root[data-theme="dark"] {
     --bg: #16181b; --panel: #1f2226; --ink: #e8e6e1; --muted: #9aa0a6; --line: #30343a; --line-row: #4a4f57;
     --accent: #5cc095; --accent-soft: #1f3a2f; --warn: #f0b451; --warn-soft: #3a2f1a; --bad: #ff8a80;
+    --soil: #4a3b2a; --soil-line: #8a6d4c; --wood: #2c4027; --wood-line: #5f8a52; --grid: #272a2f;
+    --pen: #352c48; --pen-line: #8f7bc0;
+    --heat: #f08a55; --cold: #6aa9ea; --lamp: #e8c84a;
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 system-ui, "Segoe UI", sans-serif; }
@@ -85,6 +95,35 @@
   body.simple .nothing { display: none; }   /* a devices / power panel with nothing to place */
   .modebtn { margin-top: 4px; }
   .makes { display: inline-flex; align-items: center; gap: 2px; flex-wrap: wrap; }
+  /* Base layout: one card per device placed, drawn to scale (layout.js) */
+  .lay-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; margin: 8px 0 4px; }
+  .lay-card { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+  .lay-card h3 { font-size: 13px; margin: 0 0 6px; display: flex; align-items: center; }
+  .lay-card svg { display: block; width: 100%; height: auto; max-width: 340px; margin: 0 auto; }
+  .lay-card .legend { margin-top: 6px; }
+  .lay-card .legend img.ico { width: 18px; height: 18px; margin-right: 3px; }
+  .lay-grid-line { stroke: var(--grid); stroke-width: .04; }
+  .lay-area { stroke-width: .08; stroke-dasharray: .3 .2; fill-opacity: .1; }
+  .lay-soil { fill: var(--soil); stroke: var(--soil-line); stroke-width: .07; }
+  .lay-wood { fill: var(--wood); stroke: var(--wood-line); stroke-width: .07; }
+  .lay-pen { fill: var(--pen); stroke: var(--pen-line); stroke-width: .07; }
+  .lay-heat { fill: var(--heat); stroke: var(--heat); } .lay-cold { fill: var(--cold); stroke: var(--cold); } .lay-lamp { fill: var(--lamp); stroke: var(--lamp); }
+  .lay-tag { font-size: .9px; font-weight: 600; fill: var(--ink); text-anchor: middle; dominant-baseline: central; }
+  .lay-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 10px; }
+  .lay-chip { display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; font-size: 13px; }
+  .lay-chip img.ico { width: 20px; height: 20px; margin-right: 0; }
+  .lay-sub { font-size: 12px; font-weight: 600; color: var(--muted); margin: 10px 0 2px; }
+  /* full base map (homemap.js): 80 x 60 tiles */
+  .map-wrap { border: 1px solid var(--line); border-radius: 8px; padding: 6px; margin: 8px 0; }
+  .map-wrap svg { display: block; width: 100%; height: auto; }
+  .map-land { fill: var(--panel); stroke: var(--line-row); stroke-width: .12; }
+  .map-locked { fill: var(--bg); stroke: var(--line); stroke-width: .08; stroke-dasharray: .5 .4; }
+  .map-plotno { font-size: 1.4px; fill: var(--muted); font-weight: 600; }
+  .map-fac { fill: var(--accent-soft); stroke: var(--accent); stroke-width: .08; }
+  .map-store { fill: var(--warn-soft); stroke: var(--warn); stroke-width: .1; }
+  .map-power { fill: none; stroke: var(--lamp); stroke-width: .07; stroke-dasharray: .25 .2; }
+  .map-gen { fill: var(--lamp); stroke: var(--lamp); stroke-width: .05; }
+  .map-bolt { fill: var(--lamp); }
 </style>
 </head>
 <body>
@@ -230,6 +269,12 @@
     <div class="grid2">
       <section class="panel" id="devicesPanel"><h2>Environment devices to place</h2><table><tbody id="devicesOut"></tbody></table></section>
       <section class="panel" id="powerPanel"><h2>Power</h2><table><tbody id="powerOut"></tbody></table></section>
+      <section class="panel adv" id="layoutPanel" style="grid-column: 1 / -1"><h2>Base layout</h2>
+        <div class="hint">Everything the plan uses, placed on your open plots: nothing overlaps, each climate plot is under its own device only, E-mode machines are on the power network, and the facilities one Aniimo works and the Storage Units are kept close to cut walking. One good arrangement, not the only one; the plan's numbers do not depend on it.</div>
+        <div id="mapOut"></div>
+        <div class="lay-sub">Device areas</div>
+        <div class="hint">One arrangement that works: each device's area (dashed square) with the plots that must touch it. Any arrangement with the same plots touching the area gives the same plan. Keep the areas apart, so each plot is under one device.</div>
+        <div id="layoutOut"></div></section>
       <section class="panel adv"><h2>Sell per hour</h2><table><tbody id="sold"></tbody></table></section>
       <section class="panel" style="grid-column: 1 / -1"><h2><span class="adv">Suggested roster</span><span class="simple-only">Minimum roster</span></h2>
         <div class="hint adv">The fewest Aniimo that cover all the work. Full-time jobs get their own Aniimo; part-time jobs are
@@ -251,6 +296,8 @@
 <script src="icons/index.js" onerror="window.ANIIMO_ICONS = {}"></script>
 <script src="lp.js"></script>
 <script src="planner.js"></script>
+<script src="layout.js"></script>
+<script src="homemap.js"></script>
 <script src="i18n.js"></script>
 <!-- anonymous visit counter: public site only, see counter.js -->
 <script src="counter.js" onerror="void 0"></script>
@@ -383,9 +430,11 @@
   const MODE = "aniimo-planner-mode";
   let simple = (() => { try { return localStorage.getItem(MODE) !== "advanced"; } catch (e) { return true; } })();
   function setMode(m) {
+    const wasSimple = simple;
     simple = m === "simple";
     try { localStorage.setItem(MODE, simple ? "simple" : "advanced"); } catch (e) { /* private window */ }
     document.body.classList.toggle("simple", simple);
+    if (wasSimple && !simple && lastPlan && lastPlan.status === "optimal") renderMap(lastPlan);
   }
 
   // no saved setup (first visit, Reset): RV 5 with everything it allows built and maxed (user, 2026-10-02;
@@ -709,7 +758,9 @@
   const pending = new Map();
   window.__solverWhere = "page";
   const onPage = (kind, inputs, prismana) => solverReady.then(() => new Promise((resolve) => setTimeout(resolve, 0)))
-    .then(() => (kind === "best" ? P.bestCase(D, inputs, prismana) : P.plan(D, inputs)));
+    .then(() => (kind === "best" ? P.bestCase(D, inputs, prismana)
+      : kind === "map" ? window.HomeMap.buildMap(D, inputs.plan, { roster: P.roster(P.released(D, inputs.unreleased), inputs.plan, prismana), fast: true })
+      : P.plan(D, inputs)));
   function startWorker() {
     try {
       const w = new Worker("planner-worker.js");
@@ -766,7 +817,7 @@
     cancelSolves();
     $("subline").textContent = T("Planning…");
     solve("plan", inp).then((p) => { if (token === runToken) show(inp, p, performance.now() - t0); },
-      (err) => { if (token === runToken) { $("headline").textContent = T("No plan"); $("subline").textContent = String(err && err.message || err); } });
+      (err) => { if (token === runToken) { $("headline").textContent = T("No plan"); $("subline").textContent = String(err && err.message || err); mapToken++; $("mapOut").innerHTML = ""; } });
   }
 
   function show(inp, p, ms) {
@@ -780,8 +831,9 @@
     if (p.status !== "optimal") {
       $("headline").textContent = T("No plan");
       $("subline").textContent = T(p.status);
-      for (const id of ["lines", "sold", "eaten", "bought", "devicesOut", "powerOut", "roster", "best", "planTotal", "byHand"]) $(id).innerHTML = "";
+      for (const id of ["lines", "sold", "eaten", "bought", "devicesOut", "powerOut", "layoutOut", "mapOut", "roster", "best", "planTotal", "byHand"]) $(id).innerHTML = "";
       $("devicesPanel").classList.add("nothing"); $("powerPanel").classList.add("nothing");
+      mapToken++;                                  // a map still being placed for the last plan is dropped
       // the headline is hidden in simple mode: the same words go above the warnings there (Fable review #1)
       $("warnings").insertAdjacentHTML("afterbegin", `<div class="warn simple-only"><b>${T("No plan")}</b> · ${T(p.status)}</div>`);
       $("budget").innerHTML = "";
@@ -852,9 +904,149 @@
           <div class="hint simple-only">${T("Do not add more machines: it slows all of them.")}${pw.generators > 1 ? " " + T("Link the generators into one network with power poles.") : ""}</div></td>
         <td class="muted adv">${N.job(pw.worker)}</td></tr>`;
     $("powerPanel").classList.toggle("nothing", !(pw && pw.generators));
+    renderLayout(p);
+    renderMap(p);
     lastPlan = p;
     renderRvInfo(p);
     renderRest(p);
+  }
+
+  // Base layout (user, 2026-10-09: "a 2D plan with where the machines go"). Each device placed is drawn to
+  // scale with its plots (layout.js); plots under no device and the other facilities are lists, since the game
+  // data here has no home map and no sizes for benches, Mines or pens. Their position does not change the plan.
+  const LAY_DEVICE = { "Heat Furnace": "lay-heat", "Cooling Unit": "lay-cold", Sunlamp: "lay-lamp" };
+  const cropOf = (q) => recipeOf(q.recipeId).out[0][0];
+  function zoneSvg(z) {
+    const a = z.area, xs = [a.x, a.x + a.size], ys = [a.y, a.y + a.size];
+    for (const q of z.plots) { xs.push(q.x, q.x + q.size); ys.push(q.y, q.y + q.size); }
+    const x0 = Math.floor(Math.min(...xs)) - 0.5, y0 = Math.floor(Math.min(...ys)) - 0.5;
+    const x1 = Math.ceil(Math.max(...xs)) + 0.5, y1 = Math.ceil(Math.max(...ys)) + 0.5;
+    const cls = LAY_DEVICE[z.facility] || "lay-heat";
+    let g = "";
+    for (let x = Math.ceil(x0); x <= x1; x++) g += `<line class="lay-grid-line" x1="${x}" y1="${y0}" x2="${x}" y2="${y1}"/>`;
+    for (let y = Math.ceil(y0); y <= y1; y++) g += `<line class="lay-grid-line" x1="${x0}" y1="${y}" x2="${x1}" y2="${y}"/>`;
+    g += `<rect class="lay-area ${cls}" x="${a.x}" y="${a.y}" width="${a.size}" height="${a.size}"/>`;
+    const img = (key, x, y, s, label) => (ICONS[key] === "g" ? `<rect fill="#3b4048" x="${x}" y="${y}" width="${s}" height="${s}" rx="0.15"/>` : "")
+      + (ICONS[key] ? `<image href="icons/${key}.png" x="${x}" y="${y}" width="${s}" height="${s}"/>`
+        : `<text class="lay-tag" x="${x + s / 2}" y="${y + s / 2}">${label.slice(0, 2)}</text>`);
+    for (const q of z.plots) {
+      // a pen (Starfall Hammock, Tidewhisper Sandcastle) shows its own picture, with what it makes in a corner
+      const item = cropOf(q), pen = window.Layout.PENS.includes(q.facility), pad = q.size * 0.14, s = q.size - 2 * pad;
+      const cls2 = pen ? "lay-pen" : q.facility === "Woodland" ? "lay-wood" : "lay-soil";
+      g += `<g><title>${N.fac(q.facility)}: ${N.item(item)}</title>`
+        + `<rect class="${cls2}" x="${q.x + 0.06}" y="${q.y + 0.06}" width="${q.size - 0.12}" height="${q.size - 0.12}" rx="0.2"/>`
+        + (pen ? img("facility_" + D.facilities[q.facility].id, q.x + pad, q.y + pad, s, N.fac(q.facility)) + img("item_" + item, q.x + q.size - 1.7, q.y + q.size - 1.7, 1.4, N.item(item))
+          : img("item_" + item, q.x + pad, q.y + pad, s, N.item(item))) + `</g>`;
+    }
+    g += `<rect class="${cls}" x="0.04" y="0.04" width="${z.size - 0.08}" height="${z.size - 0.08}" rx="0.15"><title>${N.fac(z.facility)}</title></rect>`;
+    return `<svg viewBox="${x0} ${y0} ${x1 - x0} ${y1 - y0}" role="img" aria-label="${N.fac(z.facility)}">${g}</svg>`;
+  }
+  // "Farmland|item" -> plots, in the order met
+  function countPlots(plots) {
+    const by = new Map();
+    for (const q of plots) { const k = q.facility + "|" + cropOf(q); by.set(k, (by.get(k) || 0) + (q.count || 1)); }
+    return [...by].map(([k, n]) => { const [f, i] = k.split("|"); return { facility: f, item: Number(i), n }; });
+  }
+  const plotLabel = (c) => itemIco(c.item) + T("{0} {1} of {2}", c.n, N.fac(c.facility), N.item(c.item));
+  function renderLayout(p) {
+    const zones = window.Layout ? window.Layout.deviceLayouts(p, D) : [];
+    let html = "";
+    if (zones.length) {
+      html += `<div class="lay-grid">` + zones.map((z) => {
+        const title = N.zone(z.facility + " (" + z.setting + ")") + (z.of > 1 ? ` · ${z.index}/${z.of}` : "");
+        const legend = countPlots(z.plots).map((c) => `<span>${plotLabel(c)}</span>`).join("");
+        const over = z.overflow.length ? `<div class="warn">${T("Did not fit in the drawing: {0}. The coverage you entered is above what fits around one device.",
+          countPlots(z.overflow).map((c) => T("{0} {1} of {2}", c.n, N.fac(c.facility), N.item(c.item))).join(", "))}</div>` : "";
+        const penLeft = z.pensLeft.length ? `<div class="hint">${T("No room left in this area for: {0}.",
+          countPlots(z.pensLeft).map((c) => T("{0} {1} of {2}", c.n, N.fac(c.facility), N.item(c.item))).join(", "))}</div>` : "";
+        return `<div class="lay-card"><h3>${facIco(z.facility)}${title}</h3>${zoneSvg(z)}<div class="legend">${legend}</div>`
+          + (z.approx ? `<div class="hint">${T("Plot counts rounded for the drawing.")}</div>` : "") + over + penLeft + `</div>`;
+      }).join("") + `</div>`;
+    } else {
+      html += `<div class="muted">${S.devices === false ? T("turned off") : T("none worth placing")}</div>`;
+    }
+    const open = window.Layout ? countPlots(window.Layout.openPlots(p).plots) : [];
+    if (open.length) html += `<div class="lay-sub">${T("Plots without a device")}</div><div class="lay-chips">`
+      + open.map((c) => `<span class="lay-chip">${plotLabel(c)}</span>`).join("") + `</div>`;
+    // the rest of the home, one chip per facility type: what each one is set to
+    const facs = new Map();                        // facility -> Map(item -> how many)
+    const add = (f, item, n) => { if (!facs.has(f)) facs.set(f, new Map()); const m = facs.get(f); m.set(item, (m.get(item) || 0) + n); };
+    // pens already drawn in a device's area are not listed again
+    const drawn = new Map();
+    for (const z of zones) for (const q of z.plots) if (window.Layout.PENS.includes(q.facility)) drawn.set(q.facility + "|" + q.recipeId, (drawn.get(q.facility + "|" + q.recipeId) || 0) + 1);
+    for (const l of p.lines) {
+      if (l.kind === "crop" || l.zone) continue;
+      const n = (l.benches != null ? l.benches : Math.ceil(l.count - 1e-6)) - (drawn.get(l.facility + "|" + l.recipeId) || 0);
+      if (n > 0) add(l.facility, recipeOf(l.recipeId).out[0][0], n);
+    }
+    for (const h of p.byHand || []) add(h.facility, recipeOf(h.recipeId).out[0][0], 1);
+    if (facs.size) html += `<div class="lay-sub">${T("Other facilities: their position does not change the plan")}</div><div class="lay-chips">`
+      + [...facs].sort((x, y) => N.fac(x[0]).localeCompare(N.fac(y[0]))).map(([f, m]) => `<span class="lay-chip">${facIco(f)}<b>${N.fac(f)}</b>`
+        + [...m].map(([i, n]) => ` ${itemIco(i)}${N.item(i)}${n > 1 ? " ×" + n : ""}`).join(" ·") + `</span>`).join("") + `</div>`;
+    $("layoutOut").innerHTML = html;
+  }
+
+  // Full base map (homemap.js), placed in the Worker like the plans: a few seconds at high RV
+  let mapToken = 0;
+  function renderMap(p) {
+    const token = ++mapToken;
+    if (simple) { $("mapOut").innerHTML = ""; return; }   // drawn when Advanced mode opens (setMode)
+    $("mapOut").innerHTML = `<div class="hint">${T("Placing everything on the map…")}</div>`;
+    // after the best-case plan, which the page asks for 30 ms later: the Worker takes one job at a time
+    setTimeout(() => { if (token !== mapToken) return;
+    solve("map", { plan: p, unreleased: S.unreleased }, !!S.bestPrismana).then((m) => { if (token === mapToken) $("mapOut").innerHTML = mapHtml(m); },
+      (err) => { if (token === mapToken) $("mapOut").innerHTML = `<div class="warn">${String(err && err.message || err)}</div>`; });
+    }, 120);
+  }
+  function mapHtml(m) {
+    const facKey = (f) => (D.facilities[f] ? "facility_" + D.facilities[f].id : null);
+    const img = (key, x, y, s) => !key || !ICONS[key] ? ""
+      : (ICONS[key] === "g" ? `<rect fill="#3b4048" x="${x}" y="${y}" width="${s}" height="${s}" rx="0.15"/>` : "") + `<image href="icons/${key}.png" x="${x}" y="${y}" width="${s}" height="${s}"/>`;
+    let g = "";
+    // the 16 plots: open ones as land, the others dashed with the RV that opens them
+    for (const [r, row] of window.HomeMap.PLOT_GRID.entries()) for (const [c, n] of row.entries()) {
+      const open = m.plots.some((q) => q.n === n), x = c * 20, y = r * 15;
+      g += `<rect class="${open ? "map-land" : "map-locked"}" x="${x}" y="${y}" width="20" height="15"/>`
+        + `<text class="map-plotno" x="${x + 0.6}" y="${y + 1.8}">${open ? n : T("RV {0}", n)}</text>`;
+    }
+    // device and power areas under everything
+    for (const it of m.items) if (it.area) {
+      const cls = it.type === "device" ? "lay-area " + (LAY_DEVICE[it.facility] || "lay-heat") : "map-power";
+      g += `<rect class="${cls}" x="${it.area.x}" y="${it.area.y}" width="${it.area.w}" height="${it.area.h}"/>`;
+    }
+    for (const it of m.items) {
+      const item = it.recipeId != null && recipeOf(it.recipeId) ? recipeOf(it.recipeId).out[0][0] : null;
+      const name = (it.type === "storage" ? T("Storage Unit") : N.fac(it.facility)) + (item ? ": " + N.item(item) : "") + (it.electric ? " (" + T("E-mode") + ")" : "");
+      const s = Math.min(it.w, it.h), pad = s * 0.12, is = s - 2 * pad;
+      const cls = it.type === "plot" ? (it.facility === "Woodland" ? "lay-wood" : "lay-soil") : it.type === "pen" ? "lay-pen"
+        : it.type === "device" ? LAY_DEVICE[it.facility] || "lay-heat" : it.type === "storage" ? "map-store"
+        : it.type === "generator" || it.type === "pole" ? "map-gen" : "map-fac";
+      g += `<g><title>${name}</title><rect class="${cls}" x="${it.x + 0.04}" y="${it.y + 0.04}" width="${it.w - 0.08}" height="${it.h - 0.08}" rx="0.15"/>`;
+      const ix = it.x + (it.w - is) / 2, iy = it.y + (it.h - is) / 2;
+      if (it.type === "plot") g += img("item_" + item, ix, iy, is);
+      else if (it.type === "storage") g += `<path d="M${it.x + 0.5} ${it.y + 0.5}h${it.w - 1}v${it.h - 1}h${-(it.w - 1)}zM${it.x + 0.5} ${it.y + 0.5}l${it.w - 1} ${it.h - 1}M${it.x + it.w - 0.5} ${it.y + 0.5}l${-(it.w - 1)} ${it.h - 1}" fill="none" stroke="var(--warn)" stroke-width=".12"/>`;
+      else if (it.type !== "device") {
+        g += img(facKey(it.facility), ix, iy, is);
+        if (item && it.type !== "generator" && s >= 2) g += img("item_" + item, it.x + it.w - s * 0.45, it.y + it.h - s * 0.45, s * 0.38);
+      }
+      if (it.electric) g += `<path class="map-bolt" d="M${it.x + 0.55} ${it.y + 0.15}l-.4 .75h.3l-.25 .65 .6-.85h-.3l.25-.55z"/>`;
+      g += `</g>`;
+    }
+    const count = (t) => m.items.filter((it) => it.type === t).length;
+    // framed on the open plots (the closed ones inside that frame stay visible, dashed)
+    const fx0 = Math.min(...m.plots.map((q) => q.x)), fy0 = Math.min(...m.plots.map((q) => q.y));
+    const fx1 = Math.max(...m.plots.map((q) => q.x + q.w)), fy1 = Math.max(...m.plots.map((q) => q.y + q.h));
+    let out = `<div class="map-wrap"><svg viewBox="${fx0 - 0.3} ${fy0 - 0.3} ${fx1 - fx0 + 0.6} ${fy1 - fy0 + 0.6}" role="img" aria-label="${T("Base layout")}">${g}</svg></div>`;
+    const maxStore = window.HomeMap.STORAGE_MAX[Math.min(20, Math.max(1, m.rv)) - 1];
+    const notes = [T("{0} open plots of 20 × 15 (RV {1}).", m.plots.length, m.rv),
+      count("storage") >= maxStore ? T("{0} Storage Units (the most RV {1} allows).", count("storage"), m.rv)
+        : T("{0} Storage Units: RV {1} allows {2}, but there is no room for more.", count("storage"), m.rv, maxStore)];
+    if (count("pole")) notes.push(count("pole") === 1 ? T("1 power pole links the E-mode machines to the power network.") : T("{0} power poles link the E-mode machines to the power network.", count("pole")));
+    if (m.walk && m.walk.haulMinPerHour != null) notes.push(T("Haulers walk about {0} min an hour to the nearest Storage Unit and back (Aniimo walk 3 tiles a second; a level-1 hauler carries 60 items a trip). For information only: the plan's numbers do not include it.", fmt(m.walk.haulMinPerHour, 1)));
+    out += `<div class="hint">${notes.join(" ")}</div>`;
+    if (m.unplaced && m.unplaced.length) out += `<div class="warn">${T("Did not fit on the open land: {0}.", [...new Set(m.unplaced.flatMap((u) => (u.members ? u.members.map((x) => x.facility) : [u.facility])).filter(Boolean))].map((f) => N.fac(f)).join(", "))}</div>`;
+    if (m.unpowered && m.unpowered.length) out += `<div class="warn">${T("{0} E-mode machines could not be linked to the power network with the poles this RV allows.", m.unpowered.length)}</div>`;
+    return out;
   }
 
   // Plan table sorting (user request): click a header to sort, click again to reverse. The choice is

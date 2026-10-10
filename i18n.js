@@ -175,6 +175,30 @@
     "Power did not give a better plan within {0} s: this is the plan without it.": "A energia não deu um plano melhor em {0} s: este é o plano sem ela.",
     "{0} level {1} needs {2} level {1}: planning with level {3}.": "{0} nível {1} precisa do {2} nível {1}: planejando com o nível {3}.",
     "none worth placing": "nenhum vale a pena",
+    // base layout panel
+    "Base layout": "Planta da base",
+    "One arrangement that works: each device's area (dashed square) with the plots that must touch it. Any arrangement with the same plots touching the area gives the same plan. Keep the areas apart, so each plot is under one device.":
+      "Uma disposição que funciona: a área de cada dispositivo (quadrado tracejado) com os lotes que precisam tocá-la. Qualquer disposição com os mesmos lotes tocando a área dá o mesmo plano. Mantenha as áreas separadas, para cada lote ficar sob um só dispositivo.",
+    "Did not fit in the drawing: {0}. The coverage you entered is above what fits around one device.":
+      "Não coube no desenho: {0}. O alcance que você informou é maior do que cabe em volta de um dispositivo.",
+    "Plot counts rounded for the drawing.": "Quantidade de lotes arredondada para o desenho.",
+    "No room left in this area for: {0}.": "Não sobrou espaço nesta área para: {0}.",
+    "Everything the plan uses, placed on your open plots: nothing overlaps, each climate plot is under its own device only, E-mode machines are on the power network, and the facilities one Aniimo works and the Storage Units are kept close to cut walking. One good arrangement, not the only one; the plan's numbers do not depend on it.":
+      "Tudo o que o plano usa, posicionado nos seus terrenos abertos: nada se sobrepõe, cada lote com clima fica só sob o seu dispositivo, as máquinas no Modo E ficam na rede de energia, e as instalações de um mesmo Aniimo e os Depósitos ficam perto para reduzir a caminhada. Uma boa disposição, não a única; os números do plano não dependem dela.",
+    "Device areas": "Áreas dos dispositivos",
+    "Placing everything on the map…": "Posicionando tudo no mapa…",
+    "Storage Unit": "Depósito",
+    "{0} open plots of 20 × 15 (RV {1}).": "{0} terrenos abertos de 20 × 15 (Motorhome {1}).",
+    "{0} Storage Units (the most RV {1} allows).": "{0} Depósitos (o máximo que o Motorhome {1} permite).",
+    "1 power pole links the E-mode machines to the power network.": "1 poste de energia liga as máquinas no Modo E à rede de energia.",
+    "{0} power poles link the E-mode machines to the power network.": "{0} postes de energia ligam as máquinas no Modo E à rede de energia.",
+    "{0} Storage Units: RV {1} allows {2}, but there is no room for more.": "{0} Depósitos: o Motorhome {1} permite {2}, mas não há espaço para mais.",
+    "Haulers walk about {0} min an hour to the nearest Storage Unit and back (Aniimo walk 3 tiles a second; a level-1 hauler carries 60 items a trip). For information only: the plan's numbers do not include it.":
+      "Os carregadores andam cerca de {0} min por hora até o Depósito mais próximo e de volta (os Aniimo andam 3 quadradinhos por segundo; um carregador nível 1 leva 60 itens por viagem). Só informativo: os números do plano não incluem isso.",
+    "Did not fit on the open land: {0}.": "Não coube nos terrenos abertos: {0}.",
+    "{0} E-mode machines could not be linked to the power network with the poles this RV allows.": "{0} máquinas no Modo E não puderam ser ligadas à rede com os postes que este Motorhome permite.",
+    "Plots without a device": "Lotes sem dispositivo",
+    "Other facilities: their position does not change the plan": "Outras instalações: a posição delas não muda o plano",
     "plot": "lote", "plots": "lotes",
     "bench": "bancada", "benches": "bancadas",
     "busy {0}": "ocupada {0}",

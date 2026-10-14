@@ -457,15 +457,32 @@
   //               time and the best case is on every screen, so the map waits for it; a timer did that before
   //               and an old plan's map could run ahead of the new best case (ChatGPT + Fable).
   //   mapToken    a map that comes back for anything but the last request is dropped
-  let shownPlan = null, layoutBusy = false, mapToken = 0;
+  //   shownMap    the map that is drawn, or null while the panel shows anything else ("Placing…", an error,
+  //               nothing). Kept so a change of language can draw the same map again at once (relabelLayout)
+  let shownPlan = null, layoutBusy = false, mapToken = 0, shownMap = null;
   const layoutOpen = () => $("layoutDetails").open && !simple;
-  function clearLayout() { mapToken++; $("mapOut").textContent = ""; $("layoutOut").textContent = ""; }
+  const placing = () => { shownMap = null; $("mapOut").innerHTML = `<div class="hint">${T("Placing everything on the map…")}</div>`; };
+  function clearLayout() { mapToken++; shownMap = null; $("mapOut").textContent = ""; $("layoutOut").textContent = ""; }
   function noLayout() { shownPlan = null; layoutBusy = false; clearLayout(); }
   function drawLayout() {
     if (!layoutOpen() || !shownPlan) { clearLayout(); return; }
     renderLayout(shownPlan);
-    if (layoutBusy) { mapToken++; $("mapOut").innerHTML = `<div class="hint">${T("Placing everything on the map…")}</div>`; }
+    if (layoutBusy) { mapToken++; placing(); }
     else requestMap(shownPlan);
+  }
+  // The language changed: the panel says what is on screen again, in the new one. A switch also makes the plan
+  // again (renderAll), and until that came back the old map stood there with its hover names in the old language:
+  // 3.4 s in Firefox on the user's RV 15 setup, then "Placing…" for as long again (user, 2026-10-13: "the name is
+  // in english when you pass the mouse ... even if you setup portuguese").
+  function relabelLayout() {
+    if (!layoutOpen() || !shownPlan) return;
+    // never in the way of the switch itself: a throw here left the page half translated and no plan was made
+    // again (Fable, gate 2026-10-13). The new plan draws all of this anyway; until then the old drawing stays.
+    try {
+      renderLayout(shownPlan);
+      if (shownMap) $("mapOut").innerHTML = mapHtml(shownMap);
+      else if ($("mapOut").querySelector(".hint")) placing();
+    } catch (e) { /* the old drawing stays */ }
   }
   // the best case of `plan` is back (or will not come): now the Worker is free for its map
   // (and only the best case of the LAST request counts: on the page's thread, with no Worker to stop, an older
@@ -478,12 +495,13 @@
   }
   function requestMap(p) {
     const token = ++mapToken;
-    $("mapOut").innerHTML = `<div class="hint">${T("Placing everything on the map…")}</div>`;
+    placing();
     // .catch, not a second argument to .then: a map that came back and could not be DRAWN threw past it and
     // "Placing everything on the map…" stayed up for good (Gemini, round 2)
-    solve("map", { plan: p, unreleased: S.unreleased }, !!S.bestPrismana).then((m) => { if (token === mapToken) $("mapOut").innerHTML = mapHtml(m); })
+    solve("map", { plan: p, unreleased: S.unreleased }, !!S.bestPrismana).then((m) => { if (token === mapToken) { $("mapOut").innerHTML = mapHtml(m); shownMap = m; } })
       .catch((err) => {                            // as text: this message went in as HTML, the plan's own error never did
         if (token !== mapToken) return;
+        shownMap = null;
         const box = document.createElement("div");
         box.className = "warn"; box.textContent = String(err && err.message || err);
         $("mapOut").replaceChildren(box);
@@ -1367,6 +1385,7 @@
   langSel.onchange = () => {
     window.I18N.setLang(langSel.value);
     window.I18N.translatePage(document.body);
+    relabelLayout();
     buildInfo(); buildRv(); renderAll();
   };
   $("advancedBtn").onclick = () => setMode("advanced");

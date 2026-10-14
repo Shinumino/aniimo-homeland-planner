@@ -41,6 +41,13 @@ your browser. The website counts visits anonymously with [GoatCounter](https://w
 
 **October 2026**
 
+- Tuckin has Grass and Hauling, as in the game. The page showed a second Tuckin with Artisanship and could put
+  it on a crafting bench: that one is a copy in the game files that nobody can own. Five more Aniimo had a copy
+  like it (Magmarex, Tubster, Shelly, Susuta, Plateau Turbo) and showed twice or with their form named twice.
+  Plans earn the same. Rosters may name different Aniimo than before, and a roster that had Tuckin crafting now
+  names one that can.
+- Base layout: when you change the language, the map and its hover names change at once. Before, the old map
+  stayed for a few seconds with its names in the other language.
 - **Base layout** (Advanced mode), by [Dan-801](https://github.com/Dan-801): a map of your homeland with
   everything the plan uses placed on your open plots. Plots sit under the right device, E-mode machines are on
   the power network, and Storage Units are close to what fills them. It has a grid (one square is one tile) and a

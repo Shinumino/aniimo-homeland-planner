@@ -41,6 +41,10 @@ your browser. The website counts visits anonymously with [GoatCounter](https://w
 
 **October 2026**
 
+- Form names follow the game's 15 October update: Prismana Form, Rainfall Form (was Rainstorm Form),
+  Timberline Form (was Mountain Woods Form) and Flowerfield Form (was Sea of Flowers Form). In Portuguese,
+  Ervassom is now Hexxin and five form names follow the game's new ones. Only the names changed: plans and
+  rosters are the same.
 - Tuckin has Grass and Hauling, as in the game. The page showed a second Tuckin with Artisanship and could put
   it on a crafting bench: that one is a copy in the game files that nobody can own. Five more Aniimo had a copy
   like it (Magmarex, Tubster, Shelly, Susuta, Plateau Turbo) and showed twice or with their form named twice.
@@ -84,8 +88,8 @@ your browser. The website counts visits anonymously with [GoatCounter](https://w
 ## Notes
 
 - The numbers (recipe times, workloads, prices, facility limits) were read from game build 3603741
-  and checked against the game where we could. Rechecked after the updates to builds 3634150 and 3668494
-  (9 October 2026): no homeland numbers changed. A game update can change them.
+  and checked against the game where we could. Rechecked after the updates to builds 3634150, 3668494,
+  3714366 and 3732728 (15 October 2026): none of these numbers changed. A game update can change them.
 - The item, facility and Aniimo icons are the game's own art and belong to its owners.
 - This is a fan-made tool. It is not affiliated with or endorsed by the makers of Aniimo.
 

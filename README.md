@@ -26,7 +26,7 @@ your browser. The website counts visits anonymously with [GoatCounter](https://w
 
 - Picks the recipes and crops for each facility, one recipe per bench, so you can set it and leave it.
 - Sends each ingredient to a single recipe, since the Aniimo decide where items go once they are in
-  storage.
+  storage (for orders you can let two benches share one, with a warning).
 - Places the Heat Furnace, Cooling Unit and Sunlamp where crops need them.
 - From RV 12 (Power Module): decides which machines to run in E-mode on Crackle Generators, at full 120%,
   and says how many generators and what to connect. Untick "Use power" to plan without it.
@@ -41,6 +41,29 @@ your browser. The website counts visits anonymously with [GoatCounter](https://w
 
 **October 2026**
 
+- New in Advanced, under **Goal**: tick "Plan to fill the most orders" and the plan makes as many of the items
+  daily orders ask for as it can, the most asked first, then the most coin (or the fastest upgrade, if that is
+  ticked). It says how much of the order board it fills, how much coin that costs, and why it cannot fill the rest.
+  While a season runs, "Season orders too" adds the season orders: 2 a day by the game's files, and you can enter
+  another number.
+- Benches may share an ingredient: with "Plan to fill the most orders" ticked, two or more benches can use the same
+  ingredient while each keeps one recipe, so the plan fills more orders (at RV 13 to 20, about 6 to 10 points more of
+  the order board with the starting limit of 4, and sometimes more with no limit). In the game the first free bench
+  takes it, so the page names every shared ingredient and its
+  benches, and lists the orders that depend on it under "If the split allows". "Share at most" (4 to start) limits
+  how many are shared.
+- The orders summary says why an order is not filled, for example "Moondew Radish already goes to Moondew Radish
+  Slices".
+- The page is reorganized: Advanced has six groups of settings (Your homeland, Goal, What you can make, Your Aniimo,
+  Make for yourself, Assumptions); the orders and upgrade results sit next to the plan; the headline shows the goal's
+  result; the rosters have the same names in both modes and show each Aniimo's best alternative first. On a phone,
+  Advanced no longer scrolls sideways and its settings fold into one line.
+- Event seeds: one tick for those paid in Home Coin (Sweet Potato) and one for those paid in Moonray Wheat (Moondew
+  Radish, Waxing Moon Pepper). Before, the Moonray Wheat seeds needed both ticks.
+- Under "No plan", nothing from the last plan comes back any more (clicking a column, picking another upgrade level,
+  or an error while planning showed its rows or times), and Simple mode now says "No plan" when planning fails.
+- A rare case where the solver called a layout impossible when it was not (it showed "This layout cannot...") is
+  fixed: such a layout now gets its plan.
 - Form names follow the game's 15 October update: Prismana Form, Rainfall Form (was Rainstorm Form),
   Timberline Form (was Mountain Woods Form) and Flowerfield Form (was Sea of Flowers Form). In Portuguese,
   Ervassom is now Hexxin and five form names follow the game's new ones. Only the names changed: plans and

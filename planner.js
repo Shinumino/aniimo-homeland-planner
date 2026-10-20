@@ -87,6 +87,54 @@
     return { level, coin: L.coin, cur: L.cur, secs: L.secs, mats: L.mats, steps, raw: [...raw] };
   }
 
+  // The order board (user, 2026-10-18: "focus to fill the most amount of recipes as possible of the daily
+  // orders", and a tick box for the season orders). D.orders comes from src/export_web.py order_board(): new
+  // orders twice a day, each asking for one item, drawn by rarity first (the RV's odds), then by weight among
+  // the orders of that rarity the RV can draw. While a season runs, its `perDay` orders come on top, by weight.
+  // share = the part of all orders that ask for the item (the most asked first); perDay = how many of it they
+  // ask for a day on average. `now` is in seconds and always passed in: the planner never reads the clock.
+  // seasonPerDay: the player's own count of season orders a day (user, 2026-10-19: "be 2 and have a place if the
+  // user wants to consider more"); blank or not a number = the game's (home_season_data.dailyOrderCount).
+  function activeSeason(D, now) {
+    const t = Number(now);
+    return ((D.orders || {}).seasons || []).find((s) => t >= s.start && t < s.end) || null;
+  }
+
+  function orderPool(D, rv, opts) {
+    const O = D.orders, o = opts || {};
+    rv = Number(rv);
+    const row = O && O.byRv.find((r) => r.rv === rv);
+    if (!row) return { perDay: 0, seasonPerDay: 0, items: [] };
+    const drawn = (x) => x.rv[0] <= rv && (x.rv[1] == null || rv < x.rv[1]);
+    const add = (m, x, p) => { const a = m.get(x.item) || [0, 0]; a[0] += p; a[1] += p * x.count; m.set(x.item, a); };
+    const byQ = new Map();
+    for (const x of O.pool.filter(drawn)) { if (!byQ.has(x.q)) byQ.set(x.q, []); byQ.get(x.q).push(x); }
+    // a rarity with nothing to draw at this RV would lose its chance; the others share it
+    const odds = [...byQ.keys()].reduce((a, q) => a + (row.odds[q - 1] || 0), 0);
+    const daily = new Map();
+    if (odds > 0) for (const [q, xs] of byQ) {
+      const W = xs.reduce((a, x) => a + x.w, 0);
+      for (const x of xs) add(daily, x, (row.odds[q - 1] || 0) / odds * x.w / W);
+    }
+    const perDay = daily.size ? row.adds.reduce((a, n) => a + n, 0) : 0;
+    const s = o.season ? activeSeason(D, o.now) : null;
+    const sx = s ? s.pool.filter(drawn) : [];
+    const SW = sx.reduce((a, x) => a + x.w, 0);
+    const season = new Map();
+    if (SW > 0) for (const x of sx) add(season, x, x.w / SW);
+    const own = o.seasonPerDay === "" || o.seasonPerDay == null ? NaN : Number(o.seasonPerDay);
+    const seasonPerDay = season.size ? (Number.isFinite(own) ? Math.max(0, own) : s.perDay) : 0;
+    const total = perDay + seasonPerDay;
+    const items = new Map();
+    // a source with no orders a day adds no items: a share of 0 would make ordersPlan's weight infinite
+    for (const [m, n] of [[daily, perDay], [season, seasonPerDay]]) if (n > 0) for (const [i, [p, u]] of m) {
+      const a = items.get(i) || { id: i, share: 0, perDay: 0 };
+      a.share += p * n / total; a.perDay += u * n;
+      items.set(i, a);
+    }
+    return { perDay: total, seasonPerDay, items: [...items.values()].sort((a, b) => b.share - a.share || a.id - b.id) };
+  }
+
   // How long until the next RV with this plan (user, 2026-09-28: "if the best Aniimo makes the recipes,
   // how long to upgrade; the plan already plants the Woodland"). Per material the slowest of:
   //   raw:    what the chain needs (58,240 Wood Block) / what the plan makes per hour that nothing
@@ -307,6 +355,29 @@
     return out;
   }
 
+  // seeds: cheapest shop row the user can use (RV, on sale or event, currency with a coin value), in coin
+  // per seed, or null when there is none (planOnce's seed costs; orderBlock's "seed you cannot buy")
+  function seedPrice(D, inp, i) {
+    let best = null;
+    for (const row of (D.seedShop && D.seedShop[i]) || []) {
+      if (row.rv != null && row.rv > inp.rv) continue;
+      // one tick per payment (user, 2026-10-19): "Event seeds" is the Home Coin ones (Sweet Potato), and the Moonray
+      // Wheat ones (Moondew Radish, Waxing Moon Pepper) follow only "I have Moonray Wheat"; they needed both before
+      const moonray = row.cur === 4040033 && inp.moonrayWheat;
+      if (row.limited && !inp.eventSeeds && !moonray) continue;
+      if (!row.onSale && !row.limited) continue;
+      const v = (inp.values || {})[row.cur];
+      // Moonray Wheat is event currency, not Home Coin: when the user says they have it, the seed
+      // costs no coin; otherwise only an explicit coin value makes it buyable
+      const coinPerUnit = row.cur === 1010 ? 1 : (row.cur === 4040033 && inp.moonrayWheat) ? 0
+        : (v != null && v !== "" ? Number(v) : null);
+      if (coinPerUnit == null) continue;
+      const cost = row.amt * coinPerUnit / (row.per || 1);
+      if (best == null || cost < best) best = cost;
+    }
+    return best;
+  }
+
   function mainOp(r) { return r.ops.find((o) => o.ph === "post" && o.ab) || null; }
 
   function describe(D, r) {
@@ -455,6 +526,235 @@
 
   function plan(D, userInputs) {
     D = released(D, (userInputs || {}).unreleased);
+    // only a real yes: a setup file can carry anything
+    return userInputs && userInputs.ordersFocus === true ? ordersPlan(D, userInputs) : goalPlan(D, userInputs);
+  }
+
+  // Orders first (user, 2026-10-18: "the focus is not coin but to fill the most amount of recipes as possible
+  // of the daily orders"; then "orders first, coin second, and show what it costs"). Like the fastest upgrade,
+  // in two steps: the most of the board the layout can fill, then, keeping that, the plan's own goal (the most
+  // coin, or the fastest upgrade when that is ticked too). An order item counts as filled when the plan sells
+  // at least what the orders ask for an hour: every order item a recipe makes has a sell price, and an item a
+  // set bench takes is never sold (one recipe per ingredient), so it would not be in storage for the order.
+  // The coin it costs is against the plan without the tick box, sales coin only (user: order rewards are not
+  // estimated).
+  // `given`: the plan without the tick box, already made (the retry without sharing below hands it on: it is the same
+  // plan, since sharing only acts on the orders steps, and solving it again cost 4-10 s on a phone; Fable gate).
+  function ordersPlan(D, ui, given) {
+    const pool = orderPool(D, ui.rv, { season: ui.seasonOrders === true, now: ui.now, seasonPerDay: ui.seasonPerDay });
+    const base = given || goalPlan(D, ui);
+    if (base.status !== "optimal") return base;
+    const untouched = Object.assign({}, base);     // keepBase writes into base; the retry gets it as it came
+    const items = pool.items.map((x) => ({ id: x.id, share: x.share, need: x.perDay / 24 }));
+    // ordersFailed: the orders could not be planned, so this is the plan without the tick box (unshared() below)
+    const keepBase = (why) => {
+      base.warnings = (base.warnings || []).concat(why);
+      return Object.assign(base, { orders: orderReport(D, base, pool, base), ordersFailed: true });
+    };
+    // the hand-written solver cannot branch on the 0/1 per order item; it only runs when HiGHS failed to load
+    if (!HIGHS) return keepBase("The orders focus needs the HiGHS solver, which did not load: this is the plan without it.");
+    if (!items.length) return Object.assign(base, { orders: orderReport(D, base, pool, base) });
+    // Step 1 maximizes the board first and coin below it: one item of the smallest share must outweigh any coin
+    // there is, so `big` = 10 x the most coin (the plan without the tick box) over that share. Step 2 keeps
+    // exactly the items step 1 picked and plans the goal (coin, or the fastest upgrade); step 1's coin is only
+    // a hint, its 1e-4 MIP gap is a few % of coin there and nothing of the board. Measured 2026-10-18 on maxed
+    // RV 12/15/18/20, season on and off (tests/orders.slow.mjs): a step 2 that kept "at least the same share"
+    // ran its second power pass into the 4 s cap at RV 15-20 (11-16 s, not proven). With 2 x instead of 10 x,
+    // step 1 itself hit the cap at RV 15 and 18; with 50 x it was slower. 10 x: never capped, 2-11 s, the same
+    // board, coin -1.4% / +2.5% / +1.7% at RV 15 / 18 / 20 against the first version.
+    // With the fastest upgrade ticked too, a tie between equal boards must go to the upgrade: holding step 1's
+    // items picked by coin, maxed RV 15 (cap 40, power off) needed 120.73 h where another set with the same board
+    // needs 115.46 h, as fast as with no orders (audit r2, ChatGPT; tests/orders.test.mjs). A speed tie-break in
+    // step 1 only got 116.04 h: next to `big` the speed term is smaller than the 1e-4 MIP gap. So there step 2
+    // keeps "at least the board's share" and goalPlan's speed step picks the items exactly, then holds them for
+    // its coin step (13-17 s capped at maxed RV 15-19 when the coin step kept the share too; 1-11 s held).
+    // Step 1 still breaks ties by speed (share x big + upgrades/h x the upgrade's coin, the fastest-upgrade
+    // objective in planOnce); the upgrade's coin is paid from the income, so that term is no more than coin.
+    const chain = ui.fastRv ? rvChain(D, Number(ui.fastRv)) : null;
+    const rv = chain ? { mats: chain.mats, coin: chain.cur === 1010 ? chain.coin : 0 } : null;
+    const tie = (q) => (rv ? q.rvRate * Math.max(1, rv.coin) : q.coinPerHour);
+    const least = Math.min(...items.map((x) => x.share));
+    let big = 10 * Math.max(1000, base.coinPerHour) / least;
+    const step1 = () => planCore(D, Object.assign({}, ui, { _orders: { items, big } }, rv ? { _rv: rv } : {}));
+    let first = step1();
+    // With the fastest upgrade ticked too, `base` is the upgrade plan, whose coin can be below what step 1 (no
+    // upgrade in it) earns, and then coin could outweigh an order item (audit r1, Gemini). Not seen in the game's
+    // data: the upgrade plan earned 57-100% of the coin plan in every case tried, the weight fails under 10%. Guard:
+    // step 1's tie-break worth more than half of one smallest item's weight means `base` was too low; weigh again.
+    // It assumes no other plan loses more than that half (a setup file that prices Moonray Wheat at a million coin
+    // can; audit r2, ChatGPT, accepted: the page offers no such price).
+    if (first.status === "optimal" && tie(first) > least * big / 2) {
+      big = 10 * tie(first) / least;
+      first = step1();
+    }
+    // Sharing allows more and forbids nothing, so a proven plan with it is never worse. A search cut by the time
+    // limit can be (ChatGPT Astra, design review 2026-10-19: "a player should not lose a better available plan
+    // merely by allowing more possibilities"): then the plan without sharing is made too and the better one shown.
+    // A step cut before it found any plan is the same case: it showed the plan without the orders focus, 10% of
+    // the board at RV 12 where the plan without sharing fills 33% (release audit r1, ChatGPT Sol). When that one
+    // fails too, the two tie and the first is kept, so a failure that is not about sharing reads as before. A plan
+    // that was made wins a tie with one that could not be: the coin plan won it when the plan without sharing only
+    // filled what the coin plan fills, and the page said "The orders could not be planned" (release audit r2, Gemini;
+    // tests/sharing.test.mjs).
+    const shares = ui.shareIngredients === true && ui.oneRecipePerBench !== false && shareLimit(ui.shareCap) !== 0;
+    const unshared = (q) => {
+      const alt = ordersPlan(D, Object.assign({}, ui, { shareIngredients: false }), untouched);
+      if (afterRetry(q, alt, !!rv) !== alt) return q;
+      alt.warnings = (alt.warnings || []).concat("Sharing ingredients could not be planned in time: this is the plan without it.");
+      return alt;
+    };
+    const failed = () => {
+      const q = keepBase("The orders could not be planned: this is the plan without the orders focus.");
+      return shares ? unshared(q) : q;
+    };
+    if (first.status !== "optimal") return failed();
+    const p = goalPlan(D, Object.assign({}, ui, { _orders: rv ? { items, min: first.ordersShare * (1 - 1e-6) } : { items, fix: first.ordersOn } }));
+    if (p.status !== "optimal") return failed();
+    if (first.capped) p.capped = true;
+    if (shares) p.shared = sharedIngredients(D, p);
+    Object.assign(p, { orders: orderReport(D, p, pool, base) });
+    return shares && p.capped ? unshared(p) : p;
+  }
+
+  // The "Share at most" box: a whole number, or no limit when it is blank (or anything that is not a number).
+  function shareLimit(v) {
+    const x = typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v) : NaN;
+    return Number.isFinite(x) ? Math.max(0, Math.floor(x)) : null;
+  }
+
+  // The ingredients plan p shares: two or more different recipes on set benches take each (crops take nothing
+  // from storage). In the game the first free bench takes it (user, 2026-10-19), so the page names each with its
+  // benches.
+  function sharedIngredients(D, p) {
+    const by = new Map();                          // ingredient -> recipe id -> { recipeId, facility, item }
+    for (const l of p.lines || []) {
+      if (l.kind === "crop") continue;
+      const r = D.recipes.find((x) => x.id === l.recipeId);
+      if (!r) continue;
+      for (const [i] of r.in) {
+        if (!by.has(i)) by.set(i, new Map());
+        if (!by.get(i).has(r.id)) by.get(i).set(r.id, { recipeId: r.id, facility: l.facility, item: r.out[0][0] });
+      }
+    }
+    return [...by].filter(([, m]) => m.size > 1).map(([ingredient, m]) => ({ ingredient, benches: [...m.values()] }));
+  }
+
+  // After the plan with sharing (q) was cut or failed and the plan without it (alt) was made: the one to show. A
+  // retry that failed never replaces q (both failed: q keeps its own words, no sharing warning on top); between a
+  // made plan and a failed one the board alone decides, since the failed one is the coin plan and wins any coin
+  // comparison, by a few coin inside the 1e-4 MIP gap when the boards tie (Fable gate 2026-10-20: the rule was
+  // betterOrders with the made plan first, which held only when the coin tied exactly; tests/sharing.test.mjs).
+  function afterRetry(q, alt, speed) {
+    if (!alt || alt.status !== "optimal" || !alt.orders || alt.ordersFailed) return q;
+    if (q.ordersFailed) return alt.orders.share >= q.orders.share - 1e-9 ? alt : q;
+    return betterOrders(q, alt, speed);
+  }
+
+  // Of two orders plans, the one that fills more of the board, then the one better at the goal (the fastest
+  // upgrade: more upgrades an hour; else more coin). Ties keep the first.
+  function betterOrders(a, b, speed) {
+    if (!b || b.status !== "optimal" || !b.orders) return a;
+    if (!a || a.status !== "optimal" || !a.orders) return b;
+    if (Math.abs(a.orders.share - b.orders.share) > 1e-9) return b.orders.share > a.orders.share ? b : a;
+    const ga = speed ? a.rvRate : a.coinPerHour, gb = speed ? b.rvRate : b.coinPerHour;
+    return gb > ga * (1 + 1e-9) + 1e-12 ? b : a;
+  }
+
+  // What the board looks like with plan p: the items it sells at their order rate (covered) and the rest with
+  // why (missing); share = the part of all orders the covered items are.
+  function orderReport(D, p, pool, base) {
+    const sold = (q, id) => ((q.sold || []).find((x) => x.id === id) || { perHour: 0 }).perHour;
+    const fills = (q, x) => sold(q, x.id) >= x.perDay / 24 - 1e-7;
+    // with sharing (p.shared, see ordersPlan): an order item hangs on the race for a shared ingredient when it is
+    // one, or the plan makes it on a set bench that takes one or an item that hangs (user: those are marked "if
+    // the split allows"); and "another bench takes its ingredient" no longer keeps an item out
+    const sharing = Array.isArray(p.shared);
+    const sharedSet = new Set((p.shared || []).map((s) => s.ingredient));
+    const makers = new Map();                      // item -> the recipe of the set bench that makes it
+    if (sharedSet.size) for (const l of p.lines || []) if (l.kind !== "crop") {
+      const r = D.recipes.find((x) => x.id === l.recipeId);
+      if (r) for (const [o] of r.out) makers.set(o, r);
+    }
+    const hangs = (i, seen) => sharedSet.has(i) || (!seen.has(i) && makers.has(i) && makers.get(i).in.some(([x]) => hangs(x, new Set(seen).add(i))));
+    const covered = pool.items.filter((x) => fills(p, x)).map((x) => (sharedSet.size && hangs(x.id, new Set()) ? Object.assign({}, x, { split: true }) : x));
+    const open = new Set(available(D, p.inputs, true).map((a) => a.r));
+    const missing = pool.items.filter((x) => !fills(p, x)).map((x) => {
+      const b = orderBlock(D, p.inputs, x.id);
+      return Object.assign({}, x, (b.why === "plan" && !sharing && orderTaken(D, p, x.id, open)) || b);
+    });
+    const share = (xs) => xs.reduce((a, x) => a + x.share, 0);
+    const cap = shareLimit(p.inputs.shareCap);
+    return { share: share(covered), perDay: pool.perDay, seasonPerDay: pool.seasonPerDay, covered, missing,
+      shareLimitReached: sharing && cap != null && p.shared.length >= cap,
+      coinPlan: { coinPerHour: base.coinPerHour, share: share(pool.items.filter((x) => fills(base, x))) } };
+  }
+
+  // Why an order item is not in the plan: no recipe makes it (a wild find), a seed you cannot buy, its recipes
+  // are locked for this layout (a Recipe Note, a facility or its level, an RV module, or turned off), an
+  // ingredient cannot be had, or none of that: the plan has no bench, Aniimo or ingredient to spare for it
+  // ("plan"). An ingredient is followed all the way down and the report names the root: Harvest Platter <-
+  // Roasted Waxing Moon Pepper <- Waxing Moon Pepper <- its seed (Moonray Wheat only) is "the seed cannot be
+  // bought". The first version stopped two steps down and called that "no bench to spare" (audit r1, Gemini +
+  // ChatGPT). `path` = the items above this one, so a loop in the recipes ends.
+  function orderBlock(D, inp, id, path) {
+    const rs = D.recipes.filter((r) => r.out.some(([o]) => o === id));
+    if (!rs.length) return D.seedShop && D.seedShop[id] ? { why: "seed" } : { why: "wild" };
+    const open = new Set(available(D, inp, true).map((a) => a.r));
+    const off = new Set((inp.disabledRecipes || []).map(Number));
+    const usable = rs.filter((r) => open.has(r) && !off.has(r.id));
+    if (!usable.length) {
+      const r = rs[0];
+      if (off.has(r.id) && open.has(r)) return { why: "off" };
+      const owned = new Set((inp.notes || []).map((n) => n.toLowerCase()));
+      if (r.note && !owned.has("all") && !owned.has(r.note.toLowerCase())) return { why: "note", note: r.note };
+      if (r.mod && (inp.modules[r.mod[0]] || 0) < Number(r.mod[1])) return { why: "module", module: r.mod[0], level: Number(r.mod[1]) };
+      const [fac, lv] = r.fac.find(([f, l]) => !(inp.facilities[f] && inp.facilities[f].count > 0 && inp.facilities[f].level >= l)) || r.fac[0];
+      return { why: "facility", facility: fac, level: lv };
+    }
+    const below = new Set(path || []).add(id);
+    // what keeps ingredient i out, or null when the layout can have it (bought, or made: "plan")
+    const block = (i) => {
+      if (seedPrice(D, inp, i) != null || below.has(i)) return null;
+      const b = orderBlock(D, inp, i, below);
+      return b.why === "plan" ? null : b.why === "ingredient" ? b : { why: "ingredient", ingredient: i, because: b };
+    };
+    // every usable recipe has an ingredient this layout cannot get: name the first recipe's
+    const stuck = usable.map((r) => r.in.reduce((found, [i]) => found || block(i), null));
+    return stuck.every(Boolean) ? stuck[0] : { why: "plan" };
+  }
+
+  // An order item left out by the routing rule of plan p: with one recipe per bench, an item a set bench uses goes
+  // to that ONE bench recipe, all of it (planOnce, routing), so it is not sold, and no second bench can be set on it.
+  // "made": the plan makes the item, but a set bench of another recipe takes it. "taken": every recipe of the item
+  // that the layout allows needs an ingredient a set bench of another recipe takes; the first recipe's is named.
+  // null otherwise. Design review 2026-10-19 (ChatGPT Astra + Fable): "No bench or Aniimo to spare" named a cause
+  // the plan had not shown; on the user's RV 16 most of its 29 items were held up this way (Umbral Pickle: its
+  // Moondew Radish goes to the Moondew Radish Slices bench). User: name the ingredient.
+  function orderTaken(D, p, id, open) {
+    const inp = p.inputs;
+    if (inp.oneRecipePerBench === false) return null;   // time-shared benches: no item belongs to one recipe
+    const to = new Map();                          // item -> what the set bench that takes it makes
+    for (const l of p.lines || []) {
+      if (l.kind === "crop") continue;             // a plot takes nothing from storage
+      const r = D.recipes.find((x) => x.id === l.recipeId);
+      if (!r || r.out.some(([o]) => o === id)) continue;
+      for (const [i] of r.in) if (!to.has(i)) to.set(i, r.out[0][0]);
+    }
+    // a crop the plan grows is "grown", not "made" (release audit r1, Gemini; the user's pick). In build 3732728 only
+    // Wheat (RV 1) and Willow Wood (RV 2) are crops an order asks for, and no plan tried fed either to a bench. Also
+    // made on a bench in the plan: "made" (release audit r2, Gemini; no item is both in this build)
+    if (to.has(id)) {
+      const makes = (l) => (D.recipes.find((x) => x.id === l.recipeId) || { out: [] }).out.some(([o]) => o === id);
+      const grown = (p.lines || []).some((l) => l.kind === "crop" && makes(l)) && !(p.lines || []).some((l) => l.kind !== "crop" && makes(l));
+      return grown ? { why: "made", to: to.get(id), grown: true } : { why: "made", to: to.get(id) };
+    }
+    const off = new Set((inp.disabledRecipes || []).map(Number));
+    const usable = D.recipes.filter((r) => r.out.some(([o]) => o === id) && open.has(r) && !off.has(r.id));
+    const hit = usable.map((r) => (r.in.find(([i]) => to.has(i)) || [])[0]);
+    return usable.length && hit.every((i) => i != null) ? { why: "taken", ingredient: hit[0], to: to.get(hit[0]) } : null;
+  }
+
+  function goalPlan(D, userInputs) {
     const level = userInputs && userInputs.fastRv;
     const chain = level ? rvChain(D, Number(level)) : null;
     if (!chain) return fullTimeCheck(D, userInputs, planCore(D, userInputs));
@@ -490,7 +790,12 @@
       p.warnings = (p.warnings || []).concat("This layout cannot make the RV " + chain.level + " materials: see Next RV level.");
       return Object.assign(p, { fastRv: { level: chain.level, reachable: false } });
     }
-    const p = planCore(D, Object.assign({}, userInputs, { _rv: Object.assign({}, rv, { min: t * 0.999 }) }));
+    // Orders focus (ordersPlan): the speed step above kept "at least the board's share", which finds the fastest set
+    // of order items exactly; the coin step holds the items that speed step picked. Kept as a share there, the coin
+    // step ran into the 4 s cap at maxed RV 15-19 (13-17 s, not proven; measured 2026-10-19).
+    const ord = userInputs && userInputs._orders;
+    const held = ord && ord.min != null && fastest.ordersOn ? { _orders: { items: ord.items, fix: fastest.ordersOn } } : {};
+    const p = planCore(D, Object.assign({}, userInputs, held, { _rv: Object.assign({}, rv, { min: t * 0.999 }) }));
     // The first step plans the speed alone: its buys and sells cost nothing, so it is not a plan to show. When
     // the second step failed, the first one WAS shown: on the built-in solver an RV 12 setup read 25,776 coin/h
     // with 3,892 Rice Seed bought an hour that no line used, and no warning (Fable, numeric pass 2026-10-10;
@@ -529,7 +834,10 @@
       // the fastest-upgrade step 1 maximizes upgrades per hour, not coin: compare on what was maximized
       // (Fable review #1: comparing coin kept a 186 h upgrade when 165.5 h was possible)
       const speed = userInputs && userInputs._rv && userInputs._rv.min == null;
-      const score = (q) => (speed ? q.rvRate : q.coinPerHour);
+      // and the orders step 1 maximizes the part of the board filled, then coin or the upgrade (ordersPlan)
+      const cover = userInputs && userInputs._orders && !userInputs._orders.fix && userInputs._orders.min == null;
+      const tie = (q) => (speed ? q.rvRate * Math.max(1, userInputs._rv.coin) : q.coinPerHour);
+      const score = (q) => (cover ? q.ordersShare * userInputs._orders.big + tie(q) : speed ? q.rvRate : q.coinPerHour);
       const better = (a, q) => (q.status === "optimal" && (a.status !== "optimal" || score(q) > score(a)) ? q : a);
       // a ticked facility (Aniipod Maker) stays on its Aniimo in this pass: it returns only with Aniimo to
       // spare, and then E-mode would only cost ingredients and power (it runs faster and eats more, 2.4 vs 2 Mega
@@ -667,6 +975,13 @@
     // globalThis.__highsTimeLimit: tests force the time cap with it (review 3 F1)
     const opts = typeof globalThis !== "undefined" && globalThis.__highsTimeLimit ? Object.assign({}, HIGHS_OPTIONS, { time_limit: globalThis.__highsTimeLimit }) : HIGHS_OPTIONS;
     try { r = HIGHS.solve(out.join("\n"), opts); } catch (e) { return null; }
+    // HiGHS's presolve can call a feasible model infeasible: maxed RV 7 with the orders focus held 7 items step 1
+    // had just planned, and all three passes came back "Infeasible", though step 1's own solution breaks none of
+    // the rows and the same models solve with presolve off (per-RV sweep 2026-10-19; tests/orders.test.mjs). So an
+    // "Infeasible" is believed only after a second solve without presolve; the cost falls on infeasible models only.
+    if (r.Status === "Infeasible") {
+      try { r = HIGHS.solve(out.join("\n"), Object.assign({}, opts, { presolve: "off" })); } catch (e) { return null; }
+    }
     if (r.Status === "Infeasible") return { status: "infeasible" };
     if (r.Status === "Unbounded") return { status: "unbounded" };
     if (r.Status === "Time limit reached" && !(isFinite(r.ObjectiveValue) && r.Columns && Object.keys(r.Columns).length))
@@ -871,25 +1186,11 @@
     const keep = Object.entries(inp.keep || {}).map(([i, perDay]) => [Number(i), Number(perDay) / 24]).filter(([, h]) => h > 0);
     for (const [i] of keep) if (!items.has(i)) warnings.push("Nothing in your layout can make " + (D.items[i] ? D.items[i].n : i) + ".");
 
-    // seeds: cheapest shop row the user can use (RV, on sale or event, currency with a coin value)
     const seedCost = new Map();
     for (const c of cols) {
       if (c.r.k !== "production") continue;
       for (const [i] of c.r.in) {
-        let best = null;
-        for (const row of (D.seedShop && D.seedShop[i]) || []) {
-          if (row.rv != null && row.rv > inp.rv) continue;
-          if (row.limited && !inp.eventSeeds) continue;
-          if (!row.onSale && !row.limited) continue;
-          const v = inp.values[row.cur];
-          // Moonray Wheat is event currency, not Home Coin: when the user says they have it, the seed
-          // costs no coin; otherwise only an explicit coin value makes it buyable
-          const coinPerUnit = row.cur === 1010 ? 1 : (row.cur === 4040033 && inp.moonrayWheat) ? 0
-            : (v != null && v !== "" ? Number(v) : null);
-          if (coinPerUnit == null) continue;
-          const cost = row.amt * coinPerUnit / (row.per || 1);
-          if (best == null || cost < best) best = cost;
-        }
+        const best = seedPrice(D, inp, i);
         if (best != null) seedCost.set(i, best);
       }
     }
@@ -1028,7 +1329,28 @@
     const tIdx = rv ? sBase + sItems.length : -1;
     const gIdx = gen ? sBase + sItems.length + (rv ? 1 : 0) : -1;   // generators placed and worked
     const hBase = sBase + sItems.length + (rv ? 1 : 0) + (gen ? 1 : 0);   // h: ticked facility in E-mode (0/1)
-    const n = hBase + handE.length;
+    // orders focus (see ordersPlan): o[k] = 1 when order item k is sold at least at the rate the orders ask.
+    // Only items the layout can sell can be: the rest stay out of the model and orderReport says why.
+    const ord = inp._orders || null;
+    const oItems = ord ? ord.items.filter((x) => sellable.includes(x.id)) : [];
+    const oBase = hBase + handE.length;
+    // Benches may share an ingredient (user, 2026-10-19; the orders plan only, see ordersPlan). r[i] = 1 when any
+    // recipe that uses item i is set: it stands for the sum of their switches in the surplus and sales rows below,
+    // so the rules stay "a set recipe takes all of it, or its benches run full and the rest piles up", now for
+    // every recipe on it together. d[i] = 1 lets every recipe that could take i take it (sum of switches <= 1 +
+    // (k - 1) d[i], k = how many there are); the d add up to at most the player's limit (no d at all when the box is
+    // blank). It was "<= 1 + d[i]", which also kept each shared item to two benches whenever the box had a number:
+    // the user's RV 16 filled 17 of 54 items with a limit of 1,000 and 18 with the box blank (release audit r1,
+    // ChatGPT Sol and Gemini; tests/sharing.test.mjs). The first experiment only dropped
+    // "sum of switches <= 1": the rows left forced every ingredient of a sharing bench to be used to the last unit
+    // and made three benches on one item impossible (design review 2026-10-19, ChatGPT Astra + Fable): +1 order
+    // item at the user's RV 16, where this form finds +5 and is proven faster than today's model (5.5 s vs 6.8 s).
+    const shareCap = shareLimit(inp.shareCap);
+    const shareOn = !!ord && inp.shareIngredients === true && oneRecipe && exact && shareCap !== 0;
+    const multi = shareOn ? [...consumers].filter(([i2, js]) => !isKept(i2) && new Set(js.map((j2) => uOf.get(j2))).size > 1).map(([i2]) => i2) : [];
+    const rBase = oBase + oItems.length, rOf = new Map(multi.map((i2, k) => [i2, rBase + k]));
+    const dBase = rBase + multi.length, dOf = new Map(shareCap == null ? [] : multi.map((i2, k) => [i2, dBase + k]));
+    const n = dBase + dOf.size;
     const rows = [], b = [];
     for (const f of facNames) {                    // facility counts (whole benches when one recipe each)
       const row = new Array(n).fill(0);
@@ -1172,22 +1494,35 @@
       if (exact && !kept) {                        // surplus of a routed item only when flagged: surplus <= M (1 - routed) + M s
         const M = most(i2);
         const row = rows[itemBase + items.get(i2)].map((v) => -v);
-        for (const u of new Set(js.map((j2) => uOf.get(j2)))) row[u] += M;   // a shared switch once (review #2)
+        if (rOf.has(i2)) row[rOf.get(i2)] += M;   // shared: any recipe on it set
+        else for (const u of new Set(js.map((j2) => uOf.get(j2)))) row[u] += M;   // a shared switch once (review #2)
         row[sOf.get(i2)] -= M;
         rows.push(row); b.push(M);
       }
       if (js.length < 2 && !market && !kept) continue;
-      if (kept || !market || js.length > 1) {     // one recipe per ingredient (none for kept items)
-        const row = new Array(n).fill(0); for (const j2 of js) row[uOf.get(j2)] = 1; rows.push(row); b.push(kept ? 0 : 1);
+      // one recipe per ingredient (none for kept items); with sharing, more when d[i] = 1, and any number with no limit
+      if ((kept || !market || js.length > 1) && !(rOf.has(i2) && !dOf.has(i2))) {
+        const row = new Array(n).fill(0); for (const j2 of js) row[uOf.get(j2)] = 1;
+        if (dOf.has(i2)) row[dOf.get(i2)] = 1 - new Set(js.map((j2) => uOf.get(j2))).size;   // d = 1: all of them
+        rows.push(row); b.push(kept ? 0 : 1);
       }
       if (!market || kept) continue;
       const M = most(i2);                         // routed: sold + eaten <= M (1 - routed), unless it has surplus
       const row = new Array(n).fill(0);
       if (si >= 0) row[nx + si] = 1;
       if (ei >= 0) row[nx + ns + nb + ei] = 1;
-      for (const j2 of js) row[uOf.get(j2)] = M;
+      if (rOf.has(i2)) row[rOf.get(i2)] = M; else for (const j2 of js) row[uOf.get(j2)] = M;
       if (sOf.has(i2)) row[sOf.get(i2)] = -M;
       rows.push(row); b.push(M);
+    }
+    for (const [i2, r] of rOf) {                   // r = 1 when any recipe on i2 is set: r >= each switch, r <= their sum, r <= 1
+      const us = [...new Set(consumers.get(i2).map((j2) => uOf.get(j2)))];
+      for (const u of us) { const row = new Array(n).fill(0); row[r] = -1; row[u] = 1; rows.push(row); b.push(0); }
+      const up = new Array(n).fill(0); up[r] = 1; for (const u of us) up[u] -= 1; rows.push(up); b.push(0);
+      const one = new Array(n).fill(0); one[r] = 1; rows.push(one); b.push(1);
+    }
+    if (dOf.size) {                                // at most the player's limit of shared items
+      const cap = new Array(n).fill(0); for (const d of dOf.values()) cap[d] = 1; rows.push(cap); b.push(shareCap);
     }
 
     const obj = new Array(n).fill(0);
@@ -1212,6 +1547,19 @@
         obj.fill(0); obj[tIdx] = scale;
       }
     }
+    if (ord) {
+      oItems.forEach((x, k) => {                   // o = 1 only if need * o <= sold
+        const row = new Array(n).fill(0); row[oBase + k] = x.need; row[nx + sellable.indexOf(x.id)] = -1; rows.push(row); b.push(0);
+      });
+      if (ord.fix) oItems.forEach((x, k) => {      // step 2: the items step 1 picked stay filled (o >= 1)
+        if (!ord.fix.includes(x.id)) return;
+        const row = new Array(n).fill(0); row[oBase + k] = -1; rows.push(row); b.push(-1);
+      });
+      else if (ord.min != null) {                  // step 2 with the fastest upgrade: at least that part of the board
+        const row = new Array(n).fill(0); oItems.forEach((x, k) => { row[oBase + k] = -x.share; }); rows.push(row); b.push(-ord.min);
+      }
+      else oItems.forEach((x, k) => { obj[oBase + k] = x.share * ord.big; });   // step 1: the board, then coin
+    }
 
     const groups = facNames.map((f) => ({ count: inp.facilities[f].count, ys: whole.filter((j) => cols[j].fac === f).map((j) => yOf.get(j)) }))
       .filter((g) => g.ys.length);
@@ -1233,8 +1581,10 @@
     // nor a machine set to E-mode with nothing to do: it would draw power and show in no line (RV 20, power test)
     cols.forEach((c, j) => { if (c.kind === "electric") obj[yOf.get(j)] -= DEVICE_EPS; });
     const hVars = handE.map((h, i) => hBase + i);
-    const ints = [...yOf.values(), ...uOwn.values(), ...fOf.values(), ...sOf.values(), ...devInts, ...cropInts, ...(gen ? [gIdx] : []), ...hVars];
-    let res = HIGHS ? solveHighs(obj, rows, b, ints, [...uOwn.values(), ...fOf.values(), ...sOf.values(), ...hVars]) : null;
+    const oVars = oItems.map((x, k) => oBase + k);
+    const dVars = [...dOf.values()];               // r stays continuous: the rows above force it to 0 or 1
+    const ints = [...yOf.values(), ...uOwn.values(), ...fOf.values(), ...sOf.values(), ...devInts, ...cropInts, ...(gen ? [gIdx] : []), ...hVars, ...oVars, ...dVars];
+    let res = HIGHS ? solveHighs(obj, rows, b, ints, [...uOwn.values(), ...fOf.values(), ...sOf.values(), ...hVars, ...oVars, ...dVars]) : null;
     // HiGHS at its time cap with nothing found: say so. Falling back to the hand-written solver ran a
     // different model and once took 49 s (Fable review 2 #2). Only a missing/broken HiGHS falls back.
     if (res && res.status === "time_limit") {
@@ -1393,6 +1743,9 @@
       status: "optimal", inputs: inp, warnings,
       capped: !!res.capped,                        // the solver stopped at its time cap: best found, not proven best
       rvRate: rv ? res.x[tIdx] : null,
+      // orders focus: the items its 0/1s hold, and their part of the board
+      ordersOn: oItems.filter((x, k) => res.x[oBase + k] > 0.5).map((x) => x.id),
+      ordersShare: oItems.reduce((a, x, k) => a + x.share * res.x[oBase + k], 0),
       // by-hand items at full speed, per hour (what the page shows under the plan)
       byHand: handRecipes.map(({ r, c }, k) => {
         const rate = handOn.has(k) ? handOn.get(k).perHourE : c.perHour;   // the E timer sets the pace in E-mode
@@ -1933,7 +2286,7 @@
       || jobLevels(b) - jobLevels(a) || a.n.localeCompare(b.n));
   }
 
-  const api = { coverage, coverFits, plan, fullTimeIngredient, rvLimits, wholeCounts, idealPersonality, alternatives, defaults, workPerMinute, recipeChoices, candidates, bestAbilityLevels, bestCase, idealRoster, roster, formLabel, parseJob, familyBest, released, rvChain, rvTime, useSolver,
+  const api = { coverage, coverFits, plan, fullTimeIngredient, rvLimits, wholeCounts, idealPersonality, alternatives, defaults, workPerMinute, recipeChoices, candidates, bestAbilityLevels, bestCase, idealRoster, roster, formLabel, parseJob, familyBest, released, rvChain, rvTime, orderPool, activeSeason, betterOrders, afterRetry, orderTaken, seedPrice, useSolver,
     lineMoney, solverName: () => (HIGHS ? "HiGHS" : "built-in"), solverTimeLimit: timeLimit };
   if (typeof module !== "undefined") module.exports = api; else root.Planner = api;
 })(this);

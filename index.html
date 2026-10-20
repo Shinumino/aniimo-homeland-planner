@@ -40,6 +40,11 @@
   main { display: grid; grid-template-columns: minmax(300px, 400px) 1fr; gap: 16px; padding: 16px 20px 40px; }
   @media (max-width: 900px) { main { grid-template-columns: 1fr; padding: 12px 16px 40px; } }
   section.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin-bottom: 12px; }
+  /* Never wider than the screen (layout review 2026-10-19: Advanced was 704 px on a 390 px phone, live site too).
+     A grid item is at least as wide as its content unless told otherwise, so a wide table pushed the whole column
+     out; min-width: 0 lets the columns shrink and a wide table scrolls inside its own panel instead. */
+  #inputs, #results, .grid2 > *, .grid3 > * { min-width: 0; }
+  section.panel { overflow-x: auto; }
   h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 8px; }
   details > summary { cursor: pointer; font-weight: 600; margin: 2px 0; }
   label.row, .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 4px 0; }
@@ -67,6 +72,23 @@
   .muted { color: var(--muted); }
   .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   @media (max-width: 1200px) { .grid2 { grid-template-columns: 1fr; } }
+  /* Sell, Food and Seeds side by side (layout review 2026-10-19: they sat under the rosters, one after another) */
+  .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; align-items: start; }
+  @media (max-width: 1200px) { .grid3 { grid-template-columns: 1fr; } }
+  /* a group inside a settings panel (the six groups of 2026-10-19), and a folded part of one */
+  section.panel > h3 { font-size: 12px; color: var(--muted); font-weight: 600; margin: 12px 0 4px; }
+  /* the goal's result under the coin (goalLine) */
+  header .goalline { font-size: 14px; font-weight: 600; }
+  header .goalline:empty { display: none; }
+  /* phones, Advanced (user, 2026-10-19): the settings folded into one line at the top (setupFold), the results right
+     under it; the summary line shows only there, so the box is plain everywhere else. (A first build moved the
+     results above the settings, which sent the folded line to the very end of the page.) */
+  #setupSummary { display: none; }
+  @media (max-width: 900px) {
+    body:not(.simple) #setupSummary { display: list-item; background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+      padding: 10px 14px; margin-bottom: 12px; }
+  }
+  details.fold { margin: 6px 0; } details.fold > summary { font-weight: 600; }
   button { font: inherit; padding: 4px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); cursor: pointer; }
   button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
   .recipes { max-height: 360px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; }
@@ -152,6 +174,7 @@
     <label class="sub" style="display:inline-flex;gap:6px;align-items:center;margin-bottom:2px"><span>Language</span>
       <select id="lang" style="width:auto"><option value="en">English</option><option value="pt">Português</option></select></label>
     <div class="headline adv" id="headline">…</div>
+    <div class="goalline adv" id="goalLine"></div>
     <div class="sub adv" id="subline"></div>
     <button id="advancedBtn" class="modebtn simple-only" type="button">Advanced mode</button>
     <button id="simpleBtn" class="modebtn adv" type="button">Simple mode</button>
@@ -159,115 +182,122 @@
 </header>
 
 <main>
+  <!-- Layout (user, 2026-10-19: "better organize the features"; design review ChatGPT Astra + Fable): the settings in
+       six groups, the goal's results before the plan, one set of roster names. Every control keeps its id, so setup
+       files and the page code read them as before. -->
   <div id="inputs">
-    <section class="panel">
-      <h2>Your RV</h2>
+    <!-- one box for every setting: folded on a phone in Advanced (setupFold), always open elsewhere -->
+    <details id="setupBox" open><summary id="setupSummary"></summary>
+    <section class="panel" id="homePanel">
+      <h2>Your homeland</h2>
       <label class="row">RV level
         <select id="rv"></select></label>
       <div class="hint adv">Changing the RV sets every limit below to what that RV allows. Everything stays editable.</div>
       <div class="row adv">
         <button id="applyMax">Fill everything to this RV's max (counts too)</button>
       </div>
-    </section>
-
-    <section class="panel adv">
-      <h2>Aniimo</h2>
-      <label class="row">Aniimo cap in your home <input type="number" id="cap" min="0"></label>
-      <div class="hint" id="capHint"></div>
-      <label class="row">Kept out of production (e.g. star farming) <input type="number" id="reserved" min="0"></label>
-      <label class="row">Haulers (Hauling ability) <input type="number" id="haulers" min="0"></label>
-      <label class="row">Aniimo that eat (blank = cap) <input type="number" id="homeAniimo" min="0"></label>
-      <label class="row">Only feed food worth at least (per item) <input type="number" id="minFoodPerItem" min="0" step="1000"></label>
-      <div class="hint">Energy Bites give 1,000; cooked dishes like Soy Sauce Fried Rice give ~45,000, so you refill far less often.</div>
-      <label class="row">Your Aniimo's ability level goes up to
-        <select id="workerMaxLevel"><option value="1">Level 1</option><option value="2">Level 2 and below</option>
-          <option value="3">Level 3 and below</option><option value="4">Level 4 and below</option></select></label>
-      <div class="hint">Each job gets your best Aniimo. A job that needs a higher level still runs, just slower;
-        on many benches one level above the requirement works 3x faster.</div>
-      <label class="check"><input type="checkbox" id="personality"> Assume every worker's personality matches its bench (+20%)</label>
-      <details><summary>Facilities that lock an Aniimo full time</summary>
-        <div id="dedicated"></div>
-        <div class="hint">These keep their Aniimo until the output is full, so each one uses a whole Aniimo.</div>
-        <div id="dedicatedNote" class="warn" style="margin-top:6px"></div>
-      </details>
-    </section>
-
-    <section class="panel adv">
-      <h2>Facilities</h2>
-      <div class="hint">How many of each you have and their level. "/N" is the most your RV allows.</div>
-      <div class="tablewrap"><table class="fac-table"><thead><tr><th>Facility</th><th class="num">Count</th><th class="num">Level</th></tr></thead>
-        <tbody id="facilities"></tbody></table></div>
-    </section>
-
-    <section class="panel adv">
-      <h2>RV modules</h2>
-      <div id="modules"></div>
-    </section>
-
-    <section class="panel adv">
-      <h2>Environment devices</h2>
-      <label class="check"><input type="checkbox" id="devices"> Let the planner place Heat Furnaces, Cooling Units and Sunlamps</label>
-      <div class="hint">It picks how many (up to your RV's limit), the setting, and which crops go under them.
-        A plot counts if any part of it is inside a device's area. Plots one device reaches, with the plots packed around it:</div>
-      <table class="cover"><thead><tr><th></th><th>Farmland</th><th>Woodland</th></tr></thead><tbody id="coverTable"></tbody></table>
-    </section>
-
-    <section class="panel adv">
-      <h2>Options</h2>
-      <label class="check"><input type="checkbox" id="oneRecipePerBench"> One recipe per bench (set it and leave it). Untick if you switch bench recipes by hand</label>
-      <label class="check"><input type="checkbox" id="power"> Use power: machines in E-mode on Crackle Generators (Power Module, RV 12)</label>
-      <label class="check"><input type="checkbox" id="watered"> Crops are watered (−5 min per growth stage; needs a free Water Aniimo)</label>
-      <label class="check"><input type="checkbox" id="feed"> Plan food for the Aniimo (unfed Aniimo work at 20% speed)</label>
-      <label class="check"><input type="checkbox" id="eventSeeds"> Event seeds can be bought</label>
-      <label class="row">Walking time per crop task (min) <input type="number" id="cropOpOverhead" step="0.1" min="0"></label>
-    </section>
-
-    <section class="panel adv">
-      <h2>Recipe Notes you own</h2>
-      <div id="notes"></div>
-    </section>
-
-    <section class="panel adv">
-      <h2>Not in the game yet</h2>
-      <div class="hint">Ticked Aniimo are never planned, listed or suggested. Untick one when it comes out.</div>
-      <details><summary id="unreleasedSummary"></summary><div id="unreleased"></div></details>
-    </section>
-
-    <section class="panel adv">
-      <h2>Make for yourself</h2>
-      <div class="hint">Tick what you make for yourself. That facility is set to it and makes it whenever the ingredients are in storage; the plan uses everything else for coin.</div>
-      <div id="aniipods"></div>
-      <label class="check"><input type="checkbox" id="moonrayWheat"> I have Moonray Wheat to buy event seeds
-        (Moondew Radish, Waxing Moon Pepper)</label>
-    </section>
-
-    <section class="panel adv">
-      <h2>Next RV level</h2>
-      <label class="row">Upgrade to RV <select id="rvGoalLevel"></select></label>
-      <label class="check"><input type="checkbox" id="fastRv"> Plan for the fastest upgrade (instead of the most coin)</label>
-      <div id="rvInfo"></div>
-    </section>
-
-    <section class="panel adv">
-      <h2>Recipes you have</h2>
-      <div class="hint">Everything your facilities, modules and notes allow. Untick what you don't have.</div>
-      <div class="row"><button id="allOn">Tick all</button><button id="allOff">Untick all</button></div>
-      <div class="recipes" id="recipes"></div>
-    </section>
-
-    <section class="panel">
-      <h2>Save & share</h2>
       <div class="row">
         <button id="export">Save setup to file</button>
         <label><button id="importBtn" type="button">Load setup file</button><input type="file" id="import" accept=".json" hidden></label>
       </div>
       <div class="row adv"><button id="reset">Reset to defaults</button></div>
       <div class="hint adv">Your setup is also remembered in this browser.</div>
+      <!-- folded when they are what the RV allows (foldSummaries) -->
+      <details class="adv fold" id="facDetails"><summary id="facSummary">Facilities</summary>
+        <div class="hint">How many of each you have and their level. "/N" is the most your RV allows.</div>
+        <div class="tablewrap"><table class="fac-table"><thead><tr><th>Facility</th><th class="num">Count</th><th class="num">Level</th></tr></thead>
+          <tbody id="facilities"></tbody></table></div>
+      </details>
+      <details class="adv fold" id="modDetails"><summary id="modSummary">RV modules</summary>
+        <div id="modules"></div>
+      </details>
     </section>
+
+    <section class="panel adv" id="goalPanel">
+      <h2>Goal</h2>
+      <label class="row">Upgrade to RV <select id="rvGoalLevel"></select></label>
+      <label class="check"><input type="checkbox" id="fastRv"> Plan for the fastest upgrade (instead of the most coin)</label>
+      <div id="ordersPanel">
+      <div class="hint">New orders come at 4:00 and 16:00, each asking for one item. Ticked, the plan makes as many of the items orders ask for as it can, the most asked first; then the most coin, or the fastest upgrade if that is ticked.</div>
+      <label class="check"><input type="checkbox" id="ordersFocus"> Plan to fill the most orders (coin comes second)</label>
+      <label class="check" id="seasonOrdersRow"><input type="checkbox" id="seasonOrders"> Season orders too (while the season runs)</label>
+      <label class="row" id="seasonPerDayRow">Season orders a day (blank = the game's number) <input type="number" id="seasonPerDay" min="0" step="1"></label>
+      <label class="check" id="shareRow"><input type="checkbox" id="shareIngredients"> Benches may share an ingredient (fills more orders)</label>
+      <div class="hint" id="shareHint">Each bench keeps one recipe, but two or more benches can use the same ingredient. In the game the first free bench takes it, so what those benches make is an estimate.</div>
+      <label class="row" id="shareCapRow">Share at most this many ingredients (blank = no limit, 0 = none) <input type="number" id="shareCap" min="0" step="1"></label>
+      </div>
+    </section>
+
+    <section class="panel adv" id="makePanel">
+      <h2>What you can make</h2>
+      <h3>Recipe Notes you own</h3>
+      <div id="notes"></div>
+      <h3>Recipes you have</h3>
+      <div class="hint">Everything your facilities, modules and notes allow. Untick what you don't have.</div>
+      <div class="row"><button id="allOn">Tick all</button><button id="allOff">Untick all</button></div>
+      <div class="recipes" id="recipes"></div>
+      <!-- one tick per payment (user, 2026-10-19), each naming its seeds from the game data (renderEventSeeds) -->
+      <h3>Event seeds you can buy</h3>
+      <label class="check" id="eventSeedsRow"><input type="checkbox" id="eventSeeds"> <span id="eventSeedsLabel"></span></label>
+      <label class="check" id="moonrayRow"><input type="checkbox" id="moonrayWheat"> <span id="moonrayLabel"></span></label>
+    </section>
+
+    <section class="panel adv" id="aniimoPanel">
+      <h2>Your Aniimo</h2>
+      <label class="row">Aniimo cap in your home <input type="number" id="cap" min="0"></label>
+      <div class="hint" id="capHint"></div>
+      <label class="row">Kept out of production (e.g. star farming) <input type="number" id="reserved" min="0"></label>
+      <label class="row">Haulers (Hauling ability) <input type="number" id="haulers" min="0"></label>
+      <label class="row">Your Aniimo's ability level goes up to
+        <select id="workerMaxLevel"><option value="1">Level 1</option><option value="2">Level 2 and below</option>
+          <option value="3">Level 3 and below</option><option value="4">Level 4 and below</option></select></label>
+      <div class="hint">Each job gets your best Aniimo. A job that needs a higher level still runs, just slower;
+        on many benches one level above the requirement works 3x faster.</div>
+      <label class="check"><input type="checkbox" id="personality"> Assume every worker's personality matches its bench (+20%)</label>
+      <details class="fold"><summary>Facilities that lock an Aniimo full time</summary>
+        <div id="dedicated"></div>
+        <div class="hint">These keep their Aniimo until the output is full, so each one uses a whole Aniimo.</div>
+        <div id="dedicatedNote" class="warn" style="margin-top:6px"></div>
+      </details>
+      <h3>Food</h3>
+      <label class="check"><input type="checkbox" id="feed"> Plan food for the Aniimo (unfed Aniimo work at 20% speed)</label>
+      <label class="row">Aniimo that eat (blank = cap) <input type="number" id="homeAniimo" min="0"></label>
+      <label class="row">Only feed food worth at least (per item) <input type="number" id="minFoodPerItem" min="0" step="1000"></label>
+      <div class="hint">Energy Bites give 1,000; cooked dishes like Soy Sauce Fried Rice give ~45,000, so you refill far less often.</div>
+      <!-- Aniimo not in the game yet: a list of Aniimo, so it sits with the Aniimo (the review put it under recipes) -->
+      <details class="fold"><summary id="unreleasedSummary"></summary>
+        <div class="hint">Ticked Aniimo are never planned, listed or suggested. Untick one when it comes out.</div>
+        <div id="unreleased"></div></details>
+    </section>
+
+    <section class="panel adv" id="selfPanel">
+      <h2>Make for yourself</h2>
+      <div class="hint">Tick what you make for yourself. That facility is set to it and makes it whenever the ingredients are in storage; the plan uses everything else for coin.</div>
+      <div id="aniipods"></div>
+    </section>
+
+    <section class="panel adv" id="assumePanel">
+      <h2>Assumptions</h2>
+      <label class="check"><input type="checkbox" id="oneRecipePerBench"> One recipe per bench (set it and leave it). Untick if you switch bench recipes by hand</label>
+      <label class="check"><input type="checkbox" id="power"> Use power: machines in E-mode on Crackle Generators (Power Module, RV 12)</label>
+      <label class="check"><input type="checkbox" id="watered"> Crops are watered (−5 min per growth stage; needs a free Water Aniimo)</label>
+      <label class="row">Walking time per crop task (min) <input type="number" id="cropOpOverhead" step="0.1" min="0"></label>
+      <label class="check"><input type="checkbox" id="devices"> Let the planner place Heat Furnaces, Cooling Units and Sunlamps</label>
+      <details class="fold"><summary>Plots one device reaches</summary>
+        <div class="hint">It picks how many (up to your RV's limit), the setting, and which crops go under them.
+          A plot counts if any part of it is inside a device's area. Plots one device reaches, with the plots packed around it:</div>
+        <table class="cover"><thead><tr><th></th><th>Farmland</th><th>Woodland</th></tr></thead><tbody id="coverTable"></tbody></table>
+      </details>
+    </section>
+    </details>
   </div>
 
   <div id="results">
     <div id="warnings"></div>
+    <div id="sharedInfo"></div>
+    <!-- the goal's results before the plan (they were inside the settings) -->
+    <section class="panel adv" id="ordersResult"><h2>Orders</h2><div id="ordersInfo"></div></section>
+    <section class="panel adv" id="rvResult"><h2>Next RV level</h2><div id="rvInfo"></div></section>
     <section class="panel adv">
       <h2>Aniimo budget</h2>
       <div id="budget"></div>
@@ -292,18 +322,21 @@
         <div class="lay-sub">Device areas</div>
         <div class="hint">One arrangement that works: each device's area (dashed square) with the plots that must touch it. Any arrangement with the same plots touching the area gives the same plan. Keep the areas apart, so each plot is under one device.</div>
         <div id="layoutOut"></div></details></section>
-      <section class="panel adv"><h2>Sell per hour</h2><table><tbody id="sold"></tbody></table></section>
-      <section class="panel" style="grid-column: 1 / -1"><h2><span class="adv">Suggested roster</span><span class="simple-only">Minimum roster</span></h2>
-        <div class="hint adv">The fewest Aniimo that cover all the work. Full-time jobs get their own Aniimo; part-time jobs are
-          grouped on Aniimo that can do several of them. <b>Ideal personality</b>: the letters that give +20% on its benches
-          (one letter per pair E/I, S/N, T/F, J/P; ? = does not matter). <b>Alternatives</b>: other Aniimo that can do all
-          the same jobs, best first, if you don't have the suggested one.</div>
-        <div class="tablewrap" id="roster"></div></section>
-      <section class="panel" style="grid-column: 1 / -1"><h2><span class="adv">Best case</span><span class="simple-only">Ideal roster</span></h2>
-        <label class="check adv"><input type="checkbox" id="bestPrismana"> Include Prismana Aniimo</label>
-        <div id="best"></div></section>
-      <section class="panel adv"><h2>Food eaten per hour</h2><table><tbody id="eaten"></tbody></table></section>
-      <section class="panel adv"><h2>Seeds to buy per hour</h2><table><tbody id="bought"></tbody></table></section>
+    </div>
+    <!-- one set of names in both modes (user, 2026-10-19): Advanced said "Suggested roster" and "Best case" -->
+    <section class="panel"><h2>Minimum roster</h2>
+      <div class="hint adv">The fewest Aniimo that cover all the work. Full-time jobs get their own Aniimo; part-time jobs are
+        grouped on Aniimo that can do several of them. <b>Ideal personality</b>: the letters that give +20% on its benches
+        (one letter per pair E/I, S/N, T/F, J/P; ? = does not matter). <b>Alternatives</b>: other Aniimo that can do all
+        the same jobs, best first, if you don't have the suggested one.</div>
+      <div class="tablewrap" id="roster"></div></section>
+    <section class="panel"><h2>Ideal roster</h2>
+      <label class="check adv"><input type="checkbox" id="bestPrismana"> Include Prismana Aniimo</label>
+      <div id="best"></div></section>
+    <div class="grid3">
+      <section class="panel adv" id="soldPanel"><h2>Sell per hour</h2><table><tbody id="sold"></tbody></table></section>
+      <section class="panel adv" id="eatenPanel"><h2>Food eaten per hour</h2><table><tbody id="eaten"></tbody></table></section>
+      <section class="panel adv" id="boughtPanel"><h2>Seeds to buy per hour</h2><table><tbody id="bought"></tbody></table></section>
     </div>
   </div>
 </main>
@@ -360,6 +393,7 @@
   const DEFAULT = {
     rv: 11, cap: 32, reserved: 2, haulers: 2, homeAniimo: "", minFoodPerItem: 0, workerMaxLevel: 3, personality: false, power: true,
     watered: true, feed: true, eventSeeds: true, oneRecipePerBench: true, unreleased: ["Jabster"], rvGoal: { level: "" }, cropOpOverhead: 0.5, notes: [], keep: {}, aniipods: [], moonrayWheat: false,
+    ordersFocus: false, seasonOrders: false, seasonPerDay: "", shareIngredients: false, shareCap: 4,
     // Signal Transmitter Lv 2 (RV 11 max): its 2 RV Park places make the default cap of 32 add up
     modules: { "Ecological Module": 3, "Kitchen Module": 4, "Resource Detector": 2, "Crafting Module": 3, "Signal Transmitter": 2 },
     facilities: {
@@ -406,7 +440,9 @@
     for (const k of ["cap", "reserved", "haulers", "minFoodPerItem", "cropOpOverhead"]) take(k, nonNeg);
     take("workerMaxLevel", (v) => (v === "" ? "" : whole(1, 4)(v)));
     take("homeAniimo", (v) => (v === "" || v === null ? "" : nonNeg(v)));
-    for (const k of ["personality", "power", "watered", "feed", "eventSeeds", "oneRecipePerBench", "moonrayWheat", "devices", "bestPrismana", "fastRv"]) take(k, bool);
+    for (const k of ["personality", "power", "watered", "feed", "eventSeeds", "oneRecipePerBench", "moonrayWheat", "devices", "bestPrismana", "fastRv", "ordersFocus", "seasonOrders", "shareIngredients"]) take(k, bool);
+    take("seasonPerDay", nonNeg);
+    take("shareCap", nonNeg);
     const facs = {};
     for (const [n, f] of Object.entries(s.facilities)) {
       if (!own(D.facilities, n)) continue;           // a facility this game build does not have
@@ -514,6 +550,7 @@
     try { localStorage.setItem(MODE, simple ? "simple" : "advanced"); } catch (e) { /* private window */ }
     document.body.classList.toggle("simple", simple);
     drawLayout();                                  // Simple: taken off the page; Advanced: drawn if the panel is open
+    setupFold(true);                               // a phone in Advanced folds the settings; Simple keeps them open
   }
 
   // no saved setup (first visit, Reset): RV 5 with everything it allows built and maxed (user, 2026-10-02;
@@ -559,6 +596,39 @@
     Object.assign(S.modules, L.modules);
     S.cap = capFor();
   }
+  // Facilities and RV modules fold when they are what the RV allows, and their line says so (layout review
+  // 2026-10-19: the two longest settings, and most players never change them). The fold is set only when the whole
+  // page is drawn (a new RV, Fill to max, a file, Reset), never while you edit, so a table does not close under you.
+  function rvMaxGaps() {
+    const L = P.rvLimits(D, S.rv);
+    let fac = 0, mod = 0;
+    for (const n of FAC_NAMES) {
+      const maxLv = L.facilities[n] || 0, maxCount = L.counts[n];
+      if (!maxLv || maxCount === 0) continue;      // not built at this RV
+      const f = S.facilities[n] || { count: 0, level: 1 };
+      if ((maxCount != null && (f.count || 0) < maxCount) || Math.min(f.level || 0, maxLv) < maxLv) fac++;
+    }
+    for (const n of Object.keys(D.modules)) if ((S.modules[n] || 0) < (L.modules[n] || 0)) mod++;
+    return { fac, mod };
+  }
+  function foldSummaries(setOpen) {
+    const g = rvMaxGaps();
+    const line = (k) => (k ? T("{0} below RV {1}'s max", k, S.rv) : T("everything RV {0} allows", S.rv));
+    $("facSummary").textContent = T("Facilities") + ": " + line(g.fac);
+    $("modSummary").textContent = T("RV modules") + ": " + line(g.mod);
+    if (setOpen) { $("facDetails").open = g.fac > 0; $("modDetails").open = g.mod > 0; }
+  }
+  // Event seeds, one tick per payment (user, 2026-10-19), each naming its seeds from the game data: the
+  // time-limited ones paid in Home Coin, and those paid in Moonray Wheat (planner.js seedPrice)
+  function renderEventSeeds() {
+    const named = (cur) => Object.keys(D.seedShop || {}).filter((i) => (D.seedShop[i] || []).some((r) => r.limited && r.cur === cur))
+      .map((i) => N.item(Number(i)));
+    const coin = named(1010), moon = named(4040033);
+    $("eventSeedsLabel").textContent = coin.join(", ") + " (" + T("Home Coin") + ")";
+    $("moonrayLabel").textContent = moon.join(", ") + " (" + T("Moonray Wheat") + ")";   // not in D.items: only items the planner uses are
+    $("eventSeedsRow").style.display = coin.length ? "" : "none";
+    $("moonrayRow").style.display = moon.length ? "" : "none";
+  }
   // Aniimo cap = home places for the RV + RV Park places from the Signal Transmitter's level
   // (user, 2026-09-28: the cap did not change with the RV; the game shows 32 at RV 11 = 30 + 2)
   const capParts = () => [D.rvCaps[S.rv] || 0, (D.parkCap || {})[S.modules["Signal Transmitter"] || 0] || 0];
@@ -598,6 +668,7 @@
         if (el.dataset.k === "count" && maxCount != null && v > maxCount) { v = maxCount; el.value = v; }
         S.facilities[n][el.dataset.k] = v;
         if (BY_HAND_FACILITIES.includes(n)) renderAniipods();
+        foldSummaries(false);
         renderRecipes(); recalc();
       };
     });
@@ -615,6 +686,7 @@
       el.onchange = () => {
         S.modules[el.dataset.mod] = Number(el.value);
         if (el.dataset.mod === "Signal Transmitter") { S.cap = capFor(); $("cap").value = S.cap; capHint(); }
+        foldSummaries(false);
         renderRecipes(); recalc();
       };
     });
@@ -687,10 +759,12 @@
     const sel = $("rvGoalLevel");
     const levels = Object.keys(D.rvLevels || {}).map(Number).filter((l) => l > Number(S.rv));
     sel.innerHTML = levels.map((l) => `<option value="${l}" ${l === goalLevel() ? "selected" : ""}>${l}</option>`).join("") || "<option>-</option>";
-    sel.onchange = () => { S.rvGoal.level = Number(sel.value); if (S.fastRv) recalc(); else { save(); renderRvInfo(lastPlan); } };
+    // the plan on screen, null under "No plan": lastPlan keeps the last good one, and its upgrade time came back
+    // under "No plan" when another level was picked (release audit r1, ChatGPT Astra; on the live site too)
+    sel.onchange = () => { S.rvGoal.level = Number(sel.value); if (S.fastRv) recalc(); else { save(); renderRvInfo(shownPlan); } };
     const fast = $("fastRv"); fast.checked = !!S.fastRv;
     fast.onchange = () => { S.fastRv = fast.checked; recalc(); };
-    renderRvInfo(lastPlan);
+    renderRvInfo(shownPlan);
   }
   let lastPlan = null;
   function renderRvInfo(res) {
@@ -701,8 +775,9 @@
     const steps = c.steps.map((st) => `<div style="padding-left:${st.depth * 14}px">${itemIco(st.item)}<b>${fmt(st.qty)} ${name(st.item)}</b>
       <span class="muted">${T("{0} = {1} on the {2} (Lv {3}+)", "", st.inputs.map(([i, q]) => fmt(q) + " " + name(i)).join(" + "), N.fac(st.fac[0]), st.fac[1]).trim()}</span></div>`).join("");
     let out = `<div class="hint">${T("RV {0} → {1}: {2}, {3} {4}; the upgrade then takes {5} h.", c.level - 1, c.level,
-        c.mats.map(([i, n]) => `${fmt(n)} ${name(i)}`).join(", "), fmt(c.coin), cur, fmt(c.secs / 3600, 1))}</div>${steps}
-      <div style="margin-top:4px">${T("Raw material: {0}", c.raw.map(([i, q]) => `${itemIco(i)}<b>${fmt(q)}</b> ${name(i)}`).join(", "))}</div>`;
+        c.mats.map(([i, n]) => `${fmt(n)} ${name(i)}`).join(", "), fmt(c.coin), cur, fmt(c.secs / 3600, 1))}</div>
+      <details class="fold"><summary>${T("What RV {0} needs, step by step", c.level)}</summary>${steps}
+      <div style="margin-top:4px">${T("Raw material: {0}", c.raw.map(([i, q]) => `${itemIco(i)}<b>${fmt(q)}</b> ${name(i)}`).join(", "))}</div></details>`;
     const dur = (h) => (!isFinite(h) ? T("never") : h >= 48 ? T("{0} days", fmt(h / 24, 1)) : T("{0} h", fmt(h, 1)));
     const f = res && res.fastRv;
     // fastest-upgrade plan: the chain is part of the plan (benches and Aniimo counted), so the time comes
@@ -734,6 +809,85 @@
         <div class="hint">${T("Needs a free Aniimo for those benches; the plan's Aniimo count does not include them.")}</div>`;
     }
     $("rvInfo").innerHTML = out;
+  }
+
+  // Orders (user, 2026-10-18): Advanced only; the season box shows only while a season runs (the game files'
+  // dates) and only with the orders box ticked, since it changes nothing without it. The cost is sales coin
+  // against the plan without the tick box (user: order rewards are not estimated).
+  const nowSec = () => Date.now() / 1000;
+  function renderOrders(res) {
+    const of = $("ordersFocus"), so = $("seasonOrders");
+    of.checked = !!S.ordersFocus; so.checked = !!S.seasonOrders;
+    // the summary's panel, next to the plan; not under "No plan", where it was a heading with nothing under it (Fable
+    // gate 2026-10-20). While a plan is being made (res null) it stays, so it does not jump on every change.
+    $("ordersResult").style.display = S.ordersFocus && !(res && res.status !== "optimal") ? "" : "none";
+    // either tick: the summary goes until the new plan is back (the season one stayed up; audit r1, ChatGPT)
+    of.onchange = () => { S.ordersFocus = of.checked; renderOrders(null); recalc(); };
+    so.onchange = () => { S.seasonOrders = so.checked; renderOrders(null); recalc(); };
+    const season = P.activeSeason(D, nowSec());
+    $("seasonOrdersRow").style.display = S.ordersFocus && season ? "" : "none";
+    // season orders a day (user, 2026-10-19: "be 2 and have a place if the user wants to consider more"): blank = the
+    // game's number, shown as the hint; not rewritten while it has the cursor, so typing is not disturbed
+    const sp = $("seasonPerDay");
+    if (document.activeElement !== sp) sp.value = S.seasonPerDay === "" || S.seasonPerDay == null ? "" : S.seasonPerDay;
+    sp.placeholder = season ? String(season.perDay) : "";
+    sp.oninput = () => { S.seasonPerDay = sp.value === "" ? "" : Math.max(0, Number(sp.value) || 0); $("ordersInfo").innerHTML = ""; recalc(); };
+    $("seasonPerDayRow").style.display = S.ordersFocus && S.seasonOrders && season ? "" : "none";
+    // benches may share an ingredient (user, 2026-10-19): only with the orders tick and one recipe per bench (time-
+    // shared benches share already); "Share at most" starts at 4, blank = no limit
+    const sh = $("shareIngredients"), sc = $("shareCap");
+    sh.checked = !!S.shareIngredients;
+    sh.onchange = () => { S.shareIngredients = sh.checked; renderOrders(null); recalc(); };
+    if (document.activeElement !== sc) sc.value = S.shareCap === "" || S.shareCap == null ? "" : S.shareCap;
+    sc.oninput = () => { S.shareCap = sc.value === "" ? "" : Math.max(0, Math.floor(Number(sc.value)) || 0); $("ordersInfo").innerHTML = ""; $("sharedInfo").innerHTML = ""; recalc(); };
+    const canShare = S.ordersFocus && S.oneRecipePerBench !== false;
+    $("shareRow").style.display = $("shareHint").style.display = canShare ? "" : "none";
+    $("shareCapRow").style.display = canShare && S.shareIngredients ? "" : "none";
+    if (!res) $("sharedInfo").innerHTML = "";      // like the summary: gone until the new plan is back
+    const o = S.ordersFocus && res && res.status === "optimal" ? res.orders : null;
+    $("ordersInfo").innerHTML = o ? ordersHtml(res, o) : "";
+  }
+  function ordersHtml(res, o) {
+    const pct = (x) => fmt(x * 100) + "%";
+    const list = (xs) => xs.map((x) => itemIco(x.id) + N.item(x.id)).join(", ");
+    // why, short, for the ingredient at the root of a chain (orderBlock in planner.js; a seed has its own line)
+    const short = (b) => b.why === "note" ? T("Recipe Note {0}", N.note(b.note)) : b.why === "facility" ? T("{0} level {1}", N.fac(b.facility), b.level)
+      : b.why === "module" ? T("{0} level {1}", N.mod(b.module), b.level) : b.why === "wild" ? T("found in the wild") : T("turned off");
+    const groups = new Map();
+    for (const m of o.missing) {
+      const k = m.why === "note" ? T("Needs the Recipe Note {0}:", N.note(m.note)) : m.why === "facility" ? T("Needs {0} level {1}:", N.fac(m.facility), m.level)
+        : m.why === "module" ? T("Needs {0} level {1}:", N.mod(m.module), m.level) : m.why === "wild" ? T("Found in the wild, not made at home:")
+        : m.why === "seed" ? T("Its seed cannot be bought:") : m.why === "off" ? T("Turned off under Recipes you have:")
+        : m.why === "ingredient" ? (m.because.why === "seed" ? T("{0} cannot be bought:", N.item(m.ingredient)) : T("Needs {0}:", N.item(m.ingredient) + " (" + short(m.because) + ")"))
+        // the routing rule (orderTaken in planner.js): a set bench of another recipe takes the item or its ingredient
+        : m.why === "made" ? (m.grown ? T("Grown, but it goes into {0}:", N.item(m.to)) : T("Made, but it goes into {0}:", N.item(m.to)))
+        : m.why === "taken" ? T("{0} already goes to {1}:", N.item(m.ingredient), N.item(m.to))
+        : T("Not filled by this plan:");
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(m);
+    }
+    const cost = Math.max(0, o.coinPlan.coinPerHour - res.coinPerHour);
+    const rows = [...groups].map(([k, xs]) => `<div class="muted">${k} ${list(xs)}</div>`).join("");
+    const plan = o.missing.some((m) => m.why === "plan" || m.why === "taken" || m.why === "made") && S.oneRecipePerBench
+      ? `<div class="hint">${T("Untick One recipe per bench (Assumptions) to fill more, if you switch bench recipes by hand.")}</div>` : "";
+    const limit = o.shareLimitReached && o.missing.some((m) => m.why === "plan") ? `<div class="hint">${T("Raise \"Share at most\" to fill more.")}</div>` : "";
+    // orders that hang on a shared ingredient apart (planner.js orderReport: `split`); the reasons for the rest are a
+    // breakdown, folded under a line with their count (they made the panel ~1,000 px tall on a phone; layout, 2026-10-19)
+    const firm = o.covered.filter((x) => !x.split), split = o.covered.filter((x) => x.split);
+    return `<div style="margin-top:8px"><b>${T("Fills about {0} of orders ({1} of {2} items); without this tick box, {3}.",
+        pct(o.share), o.covered.length, o.covered.length + o.missing.length, pct(o.coinPlan.share))}</b></div>
+      <div>${cost >= 0.5 ? T("It costs {0} coin/h of sales: {1} instead of {2}.", fmt(cost), fmt(res.coinPerHour), fmt(o.coinPlan.coinPerHour)) : T("It costs no coin.")}</div>
+      <div class="muted">${o.seasonPerDay ? T("{0} new orders a day, {1} of them season orders.", o.perDay, o.seasonPerDay) : T("{0} new orders a day.", o.perDay)}</div>
+      ${firm.length ? `<div style="margin-top:4px">${T("Orders it can fill:")} ${list(firm)}</div>` : ""}
+      ${split.length ? `<div style="margin-top:4px">${T("If the split allows:")} ${list(split)}</div>` : ""}
+      ${o.missing.length ? `<details class="fold" style="margin-top:4px"><summary>${T("Why the other {0} are not filled", o.missing.length)}</summary>${rows}</details>` : ""}${limit}${plan}`;
+  }
+  // benches that share an ingredient (user, 2026-10-19: "the Aniimo just goes for the first bench available. There is
+  // no splitting, but that is the price for the player, that is why I want a warning"); in both modes
+  function sharedHtml(p) {
+    if (!p || !p.shared || !p.shared.length) return "";
+    const li = p.shared.map((s) => `<li>${itemIco(s.ingredient)}<b>${N.item(s.ingredient)}</b>: ${s.benches.map((b) => itemIco(b.item) + N.item(b.item) + " (" + N.fac(b.facility) + ")").join(", ")}</li>`).join("");
+    return `<div class="warn"><b>${T("These benches share an ingredient.")}</b> ${T("In the game the first free bench takes it, so how much each makes, the coin per hour and the orders under \"If the split allows\" can differ from what you see.")}<ul>${li}</ul></div>`;
   }
 
   // Made by hand (user, 2026-09-28): a tick box per Aniipod, and the same for the Dance Pad Polisher's
@@ -877,11 +1031,21 @@
     worker.terminate(); pending.clear(); startWorker();
   }
   let runToken = 0;
-  function recalc() { save(); clearTimeout(timer); timer = setTimeout(() => solverReady.then(run), 80); }
+  // A change makes every plan still on its way stale at once, not 80 ms later when run() starts: an answer that
+  // landed in between was shown, e.g. the summary of a plan without the season next to a ticked season box
+  // (audit r2, ChatGPT; tests/smoke_orders.py). The goal readouts follow the ticks at once too: the headline's goal
+  // line kept the old share and upgrade time through the re-plan, and the phone's folded line the old goal, for good
+  // when the plan then failed (release audit r1, ChatGPT Astra; tests/smoke_layout.py).
+  function recalc() {
+    save(); runToken++; clearTimeout(timer); timer = setTimeout(() => solverReady.then(run), 80);
+    $("goalLine").textContent = shownPlan ? goalLine(shownPlan) : ""; setupFold(false);
+  }
 
   function run() {
+    // now: the season box counts only while the season runs (the planner never reads the clock)
     const inp = Object.assign({}, S, { homeAniimo: S.homeAniimo === "" ? null : S.homeAniimo,
-      workerMaxLevel: Number(S.workerMaxLevel) || 3, fastRv: S.fastRv ? goalLevel() : null });
+      workerMaxLevel: Number(S.workerMaxLevel) || 3, fastRv: S.fastRv ? goalLevel() : null,
+      ordersFocus: S.ordersFocus === true, seasonOrders: S.seasonOrders === true, shareIngredients: S.shareIngredients === true, now: nowSec() });
     const facs = {};
     for (const [n, f] of Object.entries(S.facilities)) if (f.count > 0) facs[n] = f;
     const pods = byHandOn();
@@ -902,31 +1066,69 @@
     cancelSolves();
     mapToken++; layoutBusy = true;                // a map on its way is for the old plan; the next waits for the new best case
     $("subline").textContent = T("Planning…");
+    // a failed solve is shown like any plan that could not be made: it only wrote "No plan" in the header, so the old
+    // rows, rosters and budget stayed up, and Simple (no header) said nothing (release audit r1, ChatGPT Astra)
     solve("plan", inp).then((p) => { if (token === runToken) show(inp, p, performance.now() - t0); },
-      (err) => { if (token === runToken) { $("headline").textContent = T("No plan"); $("subline").textContent = String(err && err.message || err); noLayout(); } });
+      (err) => { if (token === runToken) show(inp, { status: String(err && err.message || err), warnings: [] }, performance.now() - t0); });
   }
+
+  // The goal's result next to the coin in the headline (user, 2026-10-19): the share of the order board the plan
+  // fills, and when the fastest upgrade is planned, how long until the next RV. Nothing extra for the most coin.
+  // Only for a goal still ticked: recalc() calls it on the plan on screen while the next one is made.
+  function goalLine(p) {
+    const dur = (h) => (!isFinite(h) ? T("never") : h >= 48 ? T("{0} days", fmt(h / 24, 1)) : T("{0} h", fmt(h, 1)));
+    const parts = [];
+    if (S.ordersFocus && p.orders) parts.push(T("Orders: {0} filled", fmt(p.orders.share * 100) + "%"));
+    if (S.fastRv && p.fastRv && p.fastRv.reachable) parts.push(T("RV {0} in {1}", p.fastRv.level, dur(p.fastRv.readyHours + p.fastRv.upgradeHours)));
+    return parts.join(" · ");
+  }
+
+  // Phones in Advanced (user, 2026-10-19): the plan first, and the settings folded into one box under a one-line
+  // summary, open by itself only on a first visit (nothing saved yet); the plan used to start ~5,300 px down. Simple
+  // keeps its small RV box open on top (user: folding it would hide the only setting), and a desktop never folds.
+  const phone = window.matchMedia ? window.matchMedia("(max-width: 900px)") : { matches: false };
+  function setupFold(reset) {
+    const box = $("setupBox");
+    if (!phone.matches || simple) box.open = true;
+    else if (reset) box.open = firstVisit;
+    const goal = S.ordersFocus ? (S.fastRv ? T("orders, then the fastest upgrade") : T("orders, then coin"))
+      : S.fastRv ? T("the fastest upgrade") : T("the most coin");
+    $("setupSummary").textContent = T("Your setup: RV {0} · goal: {1}", S.rv, goal);
+  }
+  // crossing 900 px (a window narrowed, a tablet turned) leaves the box as it is: it closed the settings under the
+  // player (Fable gate 2026-10-20). The fold by itself is for a page that opens at phone width.
+  if (phone.addEventListener) phone.addEventListener("change", () => setupFold(false));
 
   function show(inp, p, ms) {
     lastInputs = inp;
 
     $("warnings").innerHTML = (p.warnings || []).map((w) => `<div class="warn">${N.msg(w)}</div>`).join("");
+    $("sharedInfo").innerHTML = sharedHtml(p);
     // general note when a ticked full-time facility uses ingredients (user, 2026-10-03); the plan's own warning
     // names the benches only when unticking them would really earn more
     $("dedicatedNote").textContent = p.inputs && P.fullTimeIngredient(D, p.inputs).length
       ? T("A full-time bench must never run out of ingredients: this can leave benches unused, rule out recipes or make the plan impossible.") : "";
+    setupFold(false);                              // the folded line on a phone names the RV and the goal
     if (p.status !== "optimal") {
       $("headline").textContent = T("No plan");
+      $("goalLine").textContent = "";
       $("subline").textContent = T(p.status);
       for (const id of ["lines", "sold", "eaten", "bought", "devicesOut", "powerOut", "roster", "best", "planTotal", "byHand"]) $(id).innerHTML = "";
+      // and the rows a sort draws from: clicking a column brought the last good plan back under "No plan" (release
+      // audit r2, ChatGPT Astra; on the live site too)
+      lastLines = [];
       $("devicesPanel").classList.add("nothing"); $("powerPanel").classList.add("nothing");
       noLayout();                                  // no plan on screen: no map of one, now or when the panel opens
       // the headline is hidden in simple mode: the same words go above the warnings there (Fable review #1)
-      $("warnings").insertAdjacentHTML("afterbegin", `<div class="warn simple-only"><b>${T("No plan")}</b> · ${T(p.status)}</div>`);
+      // the status can be an error's own text (a failed solve, run() above): written as text, not HTML
+      $("warnings").insertAdjacentHTML("afterbegin", `<div class="warn simple-only"><b>${T("No plan")}</b> · <span></span></div>`);
+      $("warnings").querySelector(".simple-only span").textContent = T(p.status);
       $("budget").innerHTML = "";
-      renderRvInfo(p);
+      renderRvInfo(p); renderOrders(p);
       return;
     }
     $("headline").textContent = T("{0} Home Coin / hour", fmt(p.coinPerHour));
+    $("goalLine").textContent = goalLine(p);
     $("subline").textContent = T("{0} per day · solved in {1} ms ({2})", fmt(p.coinPerDay), fmt(ms), T(P.solverName()));
     if (p.capped) $("subline").textContent += T(" · best found in {0} s", p.timeLimit || P.solverTimeLimit());
 
@@ -991,7 +1193,7 @@
         <td class="muted adv">${N.job(pw.worker)}</td></tr>`;
     $("powerPanel").classList.toggle("nothing", !(pw && pw.generators));
     lastPlan = p;
-    renderRvInfo(p);
+    renderRvInfo(p); renderOrders(p);
     renderRest(p);
     shownPlan = p; layoutBusy = true;             // renderRest asks for the best case; the map comes after it
     drawLayout();
@@ -1203,6 +1405,8 @@
     const whole = P.wholeCounts(lastLines);
     $("lines").innerHTML = rows.map((l) => {
       const r = recipeOf(l.recipeId);
+      // a bench that shares an ingredient with another (the warning above the plan names them all)
+      const sharesHere = r && lastPlan && lastPlan.shared ? lastPlan.shared.filter((s) => r.in.some(([i]) => i === s.ingredient)) : [];
       let many, cycles = l.cyclesPerHour;
       if (whole.has(l)) {
         const w = whole.get(l);
@@ -1220,7 +1424,7 @@
       const simpleMakes = r ? `<span class="makes">${r.out.map(([i]) => itemIco(i) + N.item(i)).join(" + ")}${variantHtml(r)}</span>` : "";
       const perHour = r ? r.out.map(([i, n]) => `${itemIco(i)}${fmt(n * cycles, n * cycles < 10 ? 1 : 0)}`).join(" ") : "";
       return `<tr><td>${facIco(l.facility, true)}${N.fac(l.facility)}${l.zone ? ' <span class="pill">' + N.zone(l.zone) + "</span>" : ""}${l.kind === "electric" ? ' <span class="pill">' + T("E-mode") + "</span>" : ""}</td>
-      <td class="num" style="white-space:nowrap"><span class="adv">${many}</span><span class="simple-only">${simpleMany}</span></td><td><span class="adv">${makesHtml(l.recipeId)}</span><span class="simple-only">${simpleMakes}</span>${l.note ? ` <span class="pill">${T("note")}</span>` : ""}</td>
+      <td class="num" style="white-space:nowrap"><span class="adv">${many}</span><span class="simple-only">${simpleMany}</span></td><td><span class="adv">${makesHtml(l.recipeId)}</span><span class="simple-only">${simpleMakes}</span>${l.note ? ` <span class="pill">${T("note")}</span>` : ""}${sharesHere.length ? ` <span class="pill">${T("shares {0}", sharesHere.map((s) => N.item(s.ingredient)).join(", "))}</span>` : ""}</td>
       <td class="num" style="white-space:nowrap">${perHour}</td>
       <td class="num">${T("{0} min", fmt(l.minutesPerCycle, 1))}</td><td class="num">${coinCell(l)}</td><td class="muted">${l.kind === "electric" ? T("no Aniimo") : N.job(l.worker)}</td></tr>`;
     }).join("");
@@ -1253,7 +1457,9 @@
 
   function renderRest(p) {
     const keptHtml = (p.kept || []).map((k) => `<tr><td>${itemIco(k.id)}${N.item(k.id)} <span class="pill">${T("keep")}</span></td><td class="num">${T("{0}/day", fmt(k.perDay, 1))}</td><td></td></tr>`).join("");
-    $("sold").innerHTML = keptHtml + p.sold.map((s) => `<tr><td>${itemIco(s.id)}${N.item(s.id)}</td><td class="num">${fmt(s.perHour, 1)}</td><td class="num">${fmt(s.coin)}</td></tr>`).join("") || `<tr><td class="muted">${T("nothing")}</td></tr>`;
+    // an item sold only at the order rate (about 0.03 an hour) read "0.0" next to its coin (Fable gate 2026-10-20)
+    const rate = (h) => (h > 0 && h < 0.05 ? "&lt;" + fmt(0.1, 1) : fmt(h, 1));
+    $("sold").innerHTML = keptHtml + p.sold.map((s) => `<tr><td>${itemIco(s.id)}${N.item(s.id)}</td><td class="num">${rate(s.perHour)}</td><td class="num">${fmt(s.coin)}</td></tr>`).join("") || `<tr><td class="muted">${T("nothing")}</td></tr>`;
     $("eaten").innerHTML = (p.eaten.length ? `<tr><td colspan="3" class="muted">${T("Each item fed lasts about {0} min for {1} Aniimo · a stack of 99 about {2} h", fmt(p.food.hoursPerItem * 60), fmt(p.food.eaters), fmt(p.food.hoursPerItem * 99, 1))}</td></tr>` : "")
       + p.eaten.map((e) => `<tr><td>${itemIco(e.id)}${N.item(e.id)}</td><td class="num">${fmt(e.perHour, 1)}</td><td class="num muted">${T("{0} food", fmt(e.food))}</td></tr>`).join("")
       || `<tr><td class="muted">${S.feed ? T("nothing") : T("food planning is off")}</td></tr>`;
@@ -1275,7 +1481,7 @@
       if (!alts.length) return `<span class="muted">${T("none: only this Aniimo does all these jobs")}</span>`;
       const jobsAb = [...new Set(m.jobs.map((j) => j.job.split(" ")[0]))];
       return moreList(alts.map((a) => `${aniName(a)} <span class="muted">${jobsAb.map((ab) => N.ab(ab) + " " + (a.ab[ab] || 0)).join(", ")}
-        · ${T("{0} abilities", Object.keys(a.ab).length)}</span>`), 6, "<br>");
+        · ${T("{0} abilities", Object.keys(a.ab).length)}</span>`), 1, "<br>");   // the best one, the rest behind "+N more" (layout review 2026-10-19: rows of 300 px)
     };
     // job -> facilities it works on, from every place planner.plan puts a job: plan rows (crop rows list
     // theirs in cropJobs), environment devices, the Crackle Generators and the by-hand facilities
@@ -1314,7 +1520,7 @@
             : `<b style="letter-spacing:.08em">${ip.code}</b><div class="muted" style="font-size:12px">${Object.entries(ip.help).map(([k, f]) => k + ": " + f.map(N.fac).join(", ")).join(" · ")}
               ${ip.share > 0 ? "· " + T("+20% on {0}% of its work", fmt(ip.share * 100)) : ""}</div>
               ${(ip.impossible || []).map((x) => `<div class="warn" style="font-size:12px">${T("{0} is the recommended personality, but this Aniimo can't have it: use the alternatives →", x.letter)}</div>`).join("")}`}</td>
-          <td class="adv" style="font-size:12px" data-v="${alts.length}">${altHtml(m, res)}</td></tr>`;
+          <td class="adv alts" style="font-size:12px" data-v="${alts.length}">${altHtml(m, res)}</td></tr>`;
       }).join("");
       // the ideal roster (it has `relaxed`) fits the home by design and says in plain words what that cost
       // (user, 2026-10-02: "give a heads up in simple and direct language"); the minimum roster warns when over
@@ -1329,7 +1535,7 @@
             : T("The best roster needs {0} Aniimo but only {1} are free for work: it uses {2} of your hauler places.", R.total, R.slots, R.over)}</div>` : "")
           + (R.relaxed.length ? `<div class="warn">${T("To fit your home, these jobs use a lower level: {0}.", R.relaxed.map((x) => N.job(x)).join(", "))}</div>` : "")
         : R.over > 0 ? `<div class="warn">${T("This roster needs {0} Aniimo; you have {1} for production.", R.total, R.slots)}</div>` : "";
-      return over + `<div class="hint adv" style="margin-top:6px"><b>${T("{0}: {1} Aniimo.", title || T("Suggested roster"), R.total)}</b> ${T("Click a column to sort.")}</div>
+      return over + `<div class="hint adv" style="margin-top:6px"><b>${T("{0}: {1} Aniimo.", title || T("Minimum roster"), R.total)}</b> ${T("Click a column to sort.")}</div>
         <table class="sortable roster-table"><thead><tr><th data-type="text">${T("Aniimo")}</th><th class="simple-only" data-type="text">${T("Put it on")}</th>
         <th class="adv" data-type="num">${T("Jobs it can do")}</th><th class="adv" data-type="num">${T("Works on")}</th>
         <th class="adv" data-type="num">${T("Ideal personality")}</th><th class="adv" data-type="num">${T("Alternatives")}</th></tr></thead><tbody>${rows}</tbody></table>`
@@ -1362,18 +1568,26 @@
     const ideal = P.idealRoster(pool(), current, !!S.bestPrismana);
     $("best").innerHTML = `<div class="adv"><div class="row"><span>${T("{0} Home Coin / hour with the best Aniimo", "<b>" + fmt(b.coinPerHour) + "</b>")}
         ${T("({0} / day)", fmt(b.coinPerDay))}</span><span class="${gain > 0 ? "" : "muted"}">${T("{0} / hour vs your current plan", (gain >= 0 ? "+" : "") + fmt(gain))}</span></div>
-      ${b.capped ? `<div class="hint">${T(" · best found in {0} s", b.timeLimit || P.solverTimeLimit()).replace(/^ · /, "")}</div>` : ""}</div>`
-      + window.__rosterHtml(ideal.basis, T("Best-case roster"), ideal);
+      ${b.capped ? `<div class="hint">${T(" · best found in {0} s", b.timeLimit || P.solverTimeLimit()).replace(/^ · /, "")}</div>` : ""}
+      <div class="hint">${T("That coin is from a separate plan made for the best Aniimo; the roster below is for the plan on this page.")}</div></div>`
+      + window.__rosterHtml(ideal.basis, T("Ideal roster"), ideal);   // the headings' names (release audit r2, ChatGPT Astra)
   }
 
-  function renderAll() {
+  function renderAll(keepFolds) {
     save();
     $("rv").value = S.rv;
     for (const [id, key] of [["cap", "cap"], ["reserved", "reserved"], ["haulers", "haulers"], ["homeAniimo", "homeAniimo"], ["minFoodPerItem", "minFoodPerItem"], ["cropOpOverhead", "cropOpOverhead"]]) bindNumber(id, key);
     const wl = $("workerMaxLevel"); wl.value = String(S.workerMaxLevel || 3); wl.onchange = () => { S.workerMaxLevel = Number(wl.value); recalc(); };
-    for (const [id, key] of [["personality", "personality"], ["watered", "watered"], ["oneRecipePerBench", "oneRecipePerBench"], ["feed", "feed"], ["eventSeeds", "eventSeeds"], ["bestPrismana", "bestPrismana"], ["power", "power"]]) bindCheck(id, key);
+    for (const [id, key] of [["personality", "personality"], ["watered", "watered"], ["feed", "feed"], ["eventSeeds", "eventSeeds"], ["bestPrismana", "bestPrismana"], ["power", "power"]]) bindCheck(id, key);
+    // it hides the share tick, so its warning and the orders summary go until the new plan is back, as with the other
+    // ticks (release audit r1, ChatGPT Sol: they stayed up for the whole re-plan)
+    const orb = $("oneRecipePerBench"); orb.checked = !!S.oneRecipePerBench;
+    orb.onchange = () => { S.oneRecipePerBench = orb.checked; renderOrders(null); recalc(); };
     capHint();
-    renderFacilities(); renderModules(); renderDedicated(); renderDevices(); renderNotes(); renderUnreleased(); renderAniipods(); renderRvGoal(); renderRecipes();
+    renderFacilities(); renderModules(); renderDedicated(); renderDevices(); renderNotes(); renderUnreleased(); renderAniipods(); renderRvGoal(); renderOrders(null); renderRecipes();
+    // keepFolds: a language switch leaves the folds the player opened (it folded them again; Fable gate 2026-10-20);
+    // an RV change, Fill to max, a setup file and Reset set them from the RV's max
+    renderEventSeeds(); foldSummaries(!keepFolds);
     recalc();
   }
 
@@ -1386,7 +1600,7 @@
     window.I18N.setLang(langSel.value);
     window.I18N.translatePage(document.body);
     relabelLayout();
-    buildInfo(); buildRv(); renderAll();
+    buildInfo(); buildRv(); renderAll(true);
   };
   $("advancedBtn").onclick = () => setMode("advanced");
   $("simpleBtn").onclick = () => setMode("simple");
@@ -1394,6 +1608,7 @@
   if (firstVisit) fresh();
   buildRv();
   renderAll();
+  setupFold(true);
 })();
 </script>
 </body>

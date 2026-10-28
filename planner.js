@@ -526,8 +526,165 @@
 
   function plan(D, userInputs) {
     D = released(D, (userInputs || {}).unreleased);
+    const ui = own(userInputs);
     // only a real yes: a setup file can carry anything
-    return userInputs && userInputs.ordersFocus === true ? ordersPlan(D, userInputs) : goalPlan(D, userInputs);
+    const g = ui.ordersFocus === true ? ordersPlan(D, ui) : goalPlan(D, ui);
+    const p = ui.fewerAniimo === true ? fewer(D, ui, g) : g;
+    // `slow`: a search of this plan stopped at its time limit. The page then says "Your device took long to plan this
+    // setup: this is the best plan found in N s." with the wait it measured (user, 2026-10-27: the real time waited),
+    // where it was "best found in N s" in the Advanced header only, N the limit of one search. The planner wrote that
+    // line with its own clock in round 1 of the review: a picked row said it twice with two numbers, and a Worker that
+    // crashed, the page planning again, made N the second try only (review r2, ChatGPT + Gemini). With a table,
+    // fewer() sets it (the goal's time limit counts too: Fable re-check 2026-10-24).
+    if (!p.fewer) p.slow = !!p.capped;
+    return p;
+  }
+
+  // The planner's own steps travel as inputs whose names start with "_" (_rv, _orders, _aniimoMax...). From outside
+  // they are dropped. The page rebuilds a setup file from an allow-list first (index.html readSetup), but
+  // tools/run-setup.js hands a file to the planner as it is, and there "_aniimoMax": 5 planned for 5 Aniimo with
+  // nothing saying so (security pass of the fewest-Aniimo box, 2026-10-24).
+  function own(userInputs) {
+    const ui = {};
+    for (const [k, v] of Object.entries(userInputs || {})) if (k[0] !== "_") ui[k] = v;
+    return ui;
+  }
+
+  // A warning about the goal itself (the upgrade or the orders could not be planned), not about one plan: the rows of
+  // the fewest-Aniimo table hold the same goal, so they carry it too (fewerRow).
+  function goalNote(p, w) {
+    p.warnings = (p.warnings || []).concat(w);
+    p.goalNotes = (p.goalNotes || []).concat(w);
+    return p;
+  }
+  // What the goal's last step was given beyond the player's inputs (the speed or the orders it holds, sharing turned
+  // off by a retry), and whether its plan went through the full-time check: a row of the table is that same step with
+  // an Aniimo limit (fewerRow).
+  function held(p, inputs, fullTime) {
+    const keys = {};
+    for (const k of ["_orders", "_rv", "shareIngredients"]) if (inputs && inputs[k] !== undefined) keys[k] = inputs[k];
+    p.hold = { keys, fullTime: !!fullTime };
+    return p;
+  }
+  function fastRvInfo(chain, rv, rate) {
+    return { level: chain.level, reachable: true, rate, readyHours: 1 / rate, upgradeHours: chain.secs / 3600,
+      perHour: chain.mats.map(([i, n]) => [i, n * rate]), coinForUpgrade: rv.coin * rate };
+  }
+
+  // Fewest Aniimo (user, 2026-10-24: "use as few Aniimo as possible", power first). The goal comes first, held exactly
+  // as without the box (the most coin, the fastest upgrade, the orders filled); then the fewest Aniimo that still earn
+  // the goal plan's coin: the first row of a table the player picks from, one Aniimo fewer per row, coin given up for
+  // each (user: a table, not a % box). Every working Aniimo counts: seats, devices, generators and by-hand makers too.
+  // Food is as without the box (every Aniimo at home eats; user), so fewer working Aniimo earns no food back.
+  // The fewest Aniimo is solved, not searched: one MIP with the coin held, every E-mode choice open (an E machine
+  // slower than its Aniimo is exactly what frees one), and the by-hand makers in E-mode and on their Aniimo, as planCore
+  // tries when Aniimo are short. A row is the goal's last step with at most n Aniimo (fewerRow), the same plan planCore
+  // makes for a smaller pool. `fewerPick`: the row the player picked, planned in place of the first.
+  const FEWER_ROWS = 8;                            // rows in the table (user, 2026-10-24)
+  const FEWER_LOSS = 0.1;                          // ... down to 10% under the goal's coin
+  function fewer(D, ui, g) {
+    if (g.status !== "optimal") return g;
+    if (!HIGHS) return goalNote(g, "The fewest Aniimo needs the HiGHS solver, which did not load: this is the plan without it.");
+    const hold = g.hold || { keys: {}, fullTime: false };
+    const ctx = { keys: hold.keys, fullTime: hold.fullTime, notes: g.goalNotes || [],
+      fastRv: g.fastRv && !g.fastRv.reachable ? g.fastRv : null,
+      orders: g.orders ? { coinPlan: g.orders.coinPlan, failed: !!g.ordersFailed } : null,
+      goal: { coinPerHour: g.coinPerHour, aniimo: g.aniimo.total } };
+    const top = Math.ceil(g.aniimo.total - 1e-6);
+    const q = fewest(D, Object.assign({}, ui, hold.keys), g.coinPerHour);
+    const least = q.status === "optimal" ? q : null;
+    // read before anything below marks a plan: the first row can be `g` itself, made "not proven" further down
+    const goalSlow = !!g.capped, fewestSlow = q.status === "time_limit" || !!(least && least.capped);
+    const n0 = least ? Math.min(top, Math.ceil(least.aniimo.total - 1e-6)) : top;
+    // Without the fewest Aniimo the table starts at the plan's own Aniimo, and says why: it did that in silence, and an
+    // 8-row table from 37 could not reach the 28 a full search finds at RV 17 (audit r1, ChatGPT). On every row: only
+    // the first plan said it, and a click on the next row took it away (audit r2, ChatGPT; tests/fewer.test.mjs).
+    if (!least) ctx.notes = ctx.notes.concat(q.status === "time_limit"
+      ? "The fewest Aniimo was not found within " + timeLimit() + " s: the table starts at this plan's own Aniimo."
+      : "The fewest Aniimo could not be planned: the table starts at this plan's own Aniimo.");
+    const n = fewerPick(ui.fewerPick, n0);
+    // the first row is the fewest-Aniimo plan itself (it earns the goal's coin), or the goal plan when none was found;
+    // re-solving it as a row cost 12 s more at the user's RV 17 for the same coin (2026-10-24)
+    const firstRow = () => (least && n0 < top ? finishRow(D, ui, ctx, n0, least)
+      : least ? g : Object.assign(g, { warnings: (g.warnings || []).concat(ctx.notes[ctx.notes.length - 1]) }));
+    // A pick that cannot be planned shows the first row and says why: "goal" (no plan with that few Aniimo keeps the
+    // goal), "time" (none found in time, which proves nothing; it was told as "cannot keep the goal", audit r2, Gemini)
+    let p, shown = n, pickFail = null;
+    if (n === n0) p = firstRow();
+    else {
+      p = fewerRow(D, ui, ctx, n);
+      if (p.status !== "optimal") {
+        pickFail = { n, why: p.status === "time_limit" ? "time" : p.status === "infeasible" ? "goal" : "error" };
+        p = firstRow(); shown = n0;
+      }
+    }
+    if (p.status !== "optimal") return g;
+    // the first row's claim (the fewest with no coin lost) is not proven without a fewest found to the end
+    if (shown === n0 && (!least || least.capped)) p.capped = true;
+    // a picked row comes with the first row, so the page does not solve that one again (audit r2, Gemini), marked the
+    // same way as when it is shown (Fable gate)
+    const first = shown !== n0 ? firstRow() : null;
+    if (first && (!least || least.capped)) first.capped = true;
+    // slow (see plan()): the goal's searches, the fewest search, a picked row's own or a pick that ran out of time; not
+    // the first row's "not proven" alone, which a fewest search that failed for another reason sets too (review r2)
+    p.slow = goalSlow || fewestSlow || (shown !== n0 && !!p.capped) || !!(pickFail && pickFail.why === "time");
+    if (first) first.slow = goalSlow || fewestSlow;
+    return Object.assign(p, { fewer: Object.assign({ n0, n: shown, goal: ctx.goal, ctx }, pickFail ? { pickFail } : {}, first ? { first } : {}) });
+  }
+  // The row the player picked: a whole number from 1 to the first row; anything else (a setup file can carry anything)
+  // is the first row.
+  function fewerPick(pick, n0) {
+    return Number.isInteger(pick) && pick >= 1 && pick <= n0 ? pick : n0;
+  }
+  // One solve, the by-hand makers free to run in E-mode or on their Aniimo: on the user's RV 17 that took 4.2 s, where
+  // holding them at E-mode and then on their Aniimo (planCore's way) took 8.4 s to prove the first impossible (the
+  // Maker in E-mode eats more Shell, so it cannot keep the coin) and 5.0 s more for the same 27.18 Aniimo.
+  function fewest(D, fin, coin) {
+    return planOnce(D, Object.assign({}, fin, { _exact: true, _fewest: { floor: coin - Math.max(1, Math.abs(coin) * 1e-6) } }));
+  }
+  // One row: the goal's last step with at most n working Aniimo, finished as the goal finishes its plan (the
+  // full-time check, the upgrade, the orders report against the same coin plan).
+  function fewerRow(D, userInputs, ctx, n) {
+    D = released(D, (userInputs || {}).unreleased);
+    const ui = own(userInputs);
+    if (!ctx || !Number.isInteger(n) || n < 0) return { status: "no row", warnings: [] };
+    const p = finishRow(D, ui, ctx, n, planCore(D, Object.assign({}, ui, ctx.keys, { _aniimoMax: n })));
+    p.slow = !!p.capped;                           // a row speaks only for itself (review r1, Gemini); see plan()
+    return p;
+  }
+  function finishRow(D, ui, ctx, n, p) {
+    if (p.status !== "optimal") return p;
+    const fin = Object.assign({}, ui, ctx.keys, { _aniimoMax: n });
+    if (ctx.fullTime) p = fullTimeCheck(D, fin, p);
+    // `capped` is the row's own: the goal plan's time cap copied here made a proven row read "best found" and stop the
+    // table as "not worked out in time" (Fable gate 2026-10-24; tests/fewer.test.mjs)
+    if (ctx.notes.length) p.warnings = (p.warnings || []).concat(ctx.notes);
+    if (ctx.fastRv) p.fastRv = ctx.fastRv;
+    else if (fin._rv) p.fastRv = fastRvInfo(rvChain(D, Number(ui.fastRv)), fin._rv, p.rvRate);
+    if (ctx.orders) {
+      const pool = orderPool(D, ui.rv, { season: ui.seasonOrders === true, now: ui.now, seasonPerDay: ui.seasonPerDay });
+      if (fin._orders && fin.shareIngredients === true && fin.oneRecipePerBench !== false && shareLimit(fin.shareCap) !== 0) p.shared = sharedIngredients(D, p);
+      p.orders = orderReport(D, p, pool, { coinPlan: ctx.orders.coinPlan });
+      if (ctx.orders.failed) p.ordersFailed = true;
+    }
+    return p;
+  }
+  // Why the table stops at this row, or null to go on: "coin" (more than 10% under the goal's coin), "goal" (no plan
+  // with that few Aniimo holds the goal), "time" (none found within the time limit: that proves nothing, and was told
+  // as "the goal cannot be kept"; audit r1, ChatGPT), "error" (anything else).
+  function fewerStop(goal, row) {
+    if (!row || !goal) return "error";
+    // a row stopped at the time limit with a poor plan in hand does not prove the 10% either (audit r2, ChatGPT)
+    // The 10% line is only as sharp as the solver: its plans are within 0.01% of the best (mip_rel_gap 1e-4, about
+    // 29 coin/h at the user's RV 17), so a row right at -10% may stop the table one row either side. The 1e-6 is float
+    // room only; a wider one would not make the line any truer (float check, user 2026-10-27).
+    if (row.status === "optimal") return row.coinPerHour >= goal.coinPerHour * (1 - FEWER_LOSS) - 1e-6 ? null : row.capped ? "time" : "coin";
+    return row.status === "infeasible" ? "goal" : row.status === "time_limit" ? "time" : "error";
+  }
+  // The coin a row gives up, as a share of the goal's (-0.01 = 1% less); 0 when the goal earns nothing: the table
+  // divided by it and read "NaN%" (audit r2, Gemini)
+  function fewerLoss(goal, row) {
+    return goal.coinPerHour > 0 ? row.coinPerHour / goal.coinPerHour - 1 : 0;
   }
 
   // Orders first (user, 2026-10-18: "the focus is not coin but to fill the most amount of recipes as possible
@@ -547,10 +704,7 @@
     const untouched = Object.assign({}, base);     // keepBase writes into base; the retry gets it as it came
     const items = pool.items.map((x) => ({ id: x.id, share: x.share, need: x.perDay / 24 }));
     // ordersFailed: the orders could not be planned, so this is the plan without the tick box (unshared() below)
-    const keepBase = (why) => {
-      base.warnings = (base.warnings || []).concat(why);
-      return Object.assign(base, { orders: orderReport(D, base, pool, base), ordersFailed: true });
-    };
+    const keepBase = (why) => Object.assign(goalNote(base, why), { orders: orderReport(D, base, pool, base), ordersFailed: true });
     // the hand-written solver cannot branch on the 0/1 per order item; it only runs when HiGHS failed to load
     if (!HIGHS) return keepBase("The orders focus needs the HiGHS solver, which did not load: this is the plan without it.");
     if (!items.length) return Object.assign(base, { orders: orderReport(D, base, pool, base) });
@@ -600,8 +754,7 @@
     const unshared = (q) => {
       const alt = ordersPlan(D, Object.assign({}, ui, { shareIngredients: false }), untouched);
       if (afterRetry(q, alt, !!rv) !== alt) return q;
-      alt.warnings = (alt.warnings || []).concat("Sharing ingredients could not be planned in time: this is the plan without it.");
-      return alt;
+      return goalNote(alt, "Sharing ingredients could not be planned in time: this is the plan without it.");
     };
     const failed = () => {
       const q = keepBase("The orders could not be planned: this is the plan without the orders focus.");
@@ -686,7 +839,8 @@
     const cap = shareLimit(p.inputs.shareCap);
     return { share: share(covered), perDay: pool.perDay, seasonPerDay: pool.seasonPerDay, covered, missing,
       shareLimitReached: sharing && cap != null && p.shared.length >= cap,
-      coinPlan: { coinPerHour: base.coinPerHour, share: share(pool.items.filter((x) => fills(base, x))) } };
+      // a fewest-Aniimo row brings the goal's own summary of it (fewerRow): the plan without the tick box is the same
+      coinPlan: base.coinPlan || { coinPerHour: base.coinPerHour, share: share(pool.items.filter((x) => fills(base, x))) } };
   }
 
   // Why an order item is not in the plan: no recipe makes it (a wild find), a seed you cannot buy, its recipes
@@ -757,17 +911,17 @@
   function goalPlan(D, userInputs) {
     const level = userInputs && userInputs.fastRv;
     const chain = level ? rvChain(D, Number(level)) : null;
-    if (!chain) return fullTimeCheck(D, userInputs, planCore(D, userInputs));
+    if (!chain) return held(fullTimeCheck(D, userInputs, planCore(D, userInputs)), userInputs, true);
     const rv = { mats: chain.mats, coin: chain.cur === 1010 ? chain.coin : 0 };
     const fastest = planCore(D, Object.assign({}, userInputs, { _rv: rv }));
     const t = fastest.status === "optimal" ? fastest.rvRate : 0;
     if (!(t > 1e-9)) {
-      const p = planCore(D, userInputs);
+      const p = held(planCore(D, userInputs), userInputs, false);
       // A search stopped at the time cap with no upgrade rate proves nothing: it was read as "the ticks block it"
       // or "this layout cannot make it" (ChatGPT + Gemini, audit r8). Say it ran out of time instead.
       if (fastest.status === "time_limit" || fastest.capped) {
-        p.warnings = (p.warnings || []).filter((w) => !/^No plan found within/.test(w))
-          .concat("No plan found within " + timeLimit() + " s. Try fewer options or a smaller layout.");
+        p.warnings = (p.warnings || []).filter((w) => !/^No plan found within/.test(w));
+        goalNote(p, "No plan found within " + timeLimit() + " s. Try fewer options or a smaller layout.");
         return Object.assign(p, { fastRv: { level: chain.level, reachable: false, timedOut: true } });
       }
       // A full-time facility runs non-stop, and an RV material is a two-step chain on ONE bench type, 8 to 1:
@@ -783,38 +937,38 @@
       if (freed && freed.status === "optimal" && freed.rvRate > 1e-9) {
         const names = blocking.length === 1 ? blocking[0] : blocking.slice(0, -1).join(", ") + " and " + blocking[blocking.length - 1];
         // the reason first: "full time" assumes the bench never runs out of ingredients (user, 2026-10-03)
-        p.warnings = (p.warnings || []).concat("A full-time bench must never run out of ingredients, and " + names
+        goalNote(p, "A full-time bench must never run out of ingredients, and " + names
           + " cannot keep working non-stop on the RV " + chain.level + " materials. Untick them under Facilities that lock an Aniimo full time.");
         return Object.assign(p, { fastRv: { level: chain.level, reachable: false, fullTime: blocking } });
       }
-      p.warnings = (p.warnings || []).concat("This layout cannot make the RV " + chain.level + " materials: see Next RV level.");
+      goalNote(p, "This layout cannot make the RV " + chain.level + " materials: see Next RV level.");
       return Object.assign(p, { fastRv: { level: chain.level, reachable: false } });
     }
     // Orders focus (ordersPlan): the speed step above kept "at least the board's share", which finds the fastest set
     // of order items exactly; the coin step holds the items that speed step picked. Kept as a share there, the coin
     // step ran into the 4 s cap at maxed RV 15-19 (13-17 s, not proven; measured 2026-10-19).
     const ord = userInputs && userInputs._orders;
-    const held = ord && ord.min != null && fastest.ordersOn ? { _orders: { items: ord.items, fix: fastest.ordersOn } } : {};
-    const p = planCore(D, Object.assign({}, userInputs, held, { _rv: Object.assign({}, rv, { min: t * 0.999 }) }));
+    const hold = ord && ord.min != null && fastest.ordersOn ? { _orders: { items: ord.items, fix: fastest.ordersOn } } : {};
+    const last = Object.assign({}, userInputs, hold, { _rv: Object.assign({}, rv, { min: t * 0.999 }) });
+    const p = held(planCore(D, last), last, false);
     // The first step plans the speed alone: its buys and sells cost nothing, so it is not a plan to show. When
     // the second step failed, the first one WAS shown: on the built-in solver an RV 12 setup read 25,776 coin/h
     // with 3,892 Rice Seed bought an hour that no line used, and no warning (Fable, numeric pass 2026-10-10;
     // tests/fallback.test.mjs). The plan for the most coin goes out instead, and says so.
     if (p.status !== "optimal") {
-      const coin = planCore(D, userInputs);
+      const coin = held(planCore(D, userInputs), userInputs, false);
       const timedOut = p.status === "time_limit";
       // When even that one is no plan it keeps its own words: "this is the plan for the most coin" under "No plan"
       // would be false (Fable, round 2; no test, no setup found where the speed plans and the coin does not).
-      if (coin.status === "optimal") coin.warnings = (coin.warnings || []).filter((w) => !/^No plan found within/.test(w))
-        .concat(timedOut ? "No plan found within " + timeLimit() + " s. Try fewer options or a smaller layout."
+      if (coin.status === "optimal") {
+        coin.warnings = (coin.warnings || []).filter((w) => !/^No plan found within/.test(w));
+        goalNote(coin, timedOut ? "No plan found within " + timeLimit() + " s. Try fewer options or a smaller layout."
           : "The fastest upgrade could not be planned: this is the plan for the most coin.");
+      }
       return Object.assign(coin, { fastRv: Object.assign({ level: chain.level, reachable: false }, timedOut ? { timedOut: true } : { failed: true }) });
     }
     if (fastest.capped) p.capped = true;         // either step at the time cap: not proven best
-    const rate = p.rvRate;
-    return Object.assign(p, { fastRv: { level: chain.level, reachable: true, rate,
-      readyHours: 1 / rate, upgradeHours: chain.secs / 3600, perHour: chain.mats.map(([i, n]) => [i, n * rate]),
-      coinForUpgrade: rv.coin * rate } });
+    return Object.assign(p, { fastRv: fastRvInfo(chain, rv, p.rvRate) });
   }
 
   function planCore(D, userInputs) {
@@ -847,14 +1001,20 @@
       // and water). A small search, never at the cap RV 12-20 (0.5-3.7 s). Then every bench too; the better plan
       // is kept. Measured 2026-10-01: the full search alone ran out of time at RV 19-20 (394,828 at RV 20, the
       // floor gives 403,788; the true best is 417,051), the floor alone gave up 2-3% at RV 16 and 19.
-      const names = ["floor", "full"];
-      const tried = [planOnce(D, Object.assign({}, exact, { _eFasterOnly: true, _eLockedOnly: true, _handE: 0 })),
+      // A fewest-Aniimo row (fewerRow) is short of Aniimo by design, so it is one pass: every E-mode choice open and
+      // the by-hand makers free. Measured 2026-10-24 on the user's RV 17 and maxed RV 20 (with and without the Maker
+      // ticked): the faster-only passes came 10% under on every row (266,908 vs 294,505 at 27 Aniimo), and one free
+      // pass gave the same coin as the two held ones below in 4.6-22.6 s against 10.1-32.2 s, never capped.
+      const limited = userInputs._aniimoMax != null;
+      const names = limited ? [] : ["floor", "full"];
+      const tried = limited ? [] : [planOnce(D, Object.assign({}, exact, { _eFasterOnly: true, _eLockedOnly: true, _handE: 0 })),
                      planOnce(D, Object.assign({}, exact, { _eFasterOnly: true, _handE: 0 }))];
       // read before any flag is copied onto a pass below (review 4 N1: the copied "capped" made the floor look
       // unproven and the no-power solve ran anyway, +3-4 s at RV 20)
-      const floorProven = tried[0].status === "optimal" && !tried[0].capped;
-      const fast = tried.reduce(better);
-      if (!(fast.status === "optimal" && fast.aniimo.pool - fast.aniimo.total >= 1 - 1e-6)) {
+      const floorProven = !limited && tried[0].status === "optimal" && !tried[0].capped;
+      const fast = limited ? null : tried.reduce(better);
+      if (limited) { tried.push(planOnce(D, exact)); names.push("fewest Aniimo row"); }
+      else if (!(fast.status === "optimal" && fast.aniimo.pool - fast.aniimo.total >= 1 - 1e-6)) {
         // Aniimo short: every E-mode choice, with any ticked facility held in E-mode (freeing its Aniimo pays
         // now; held, not free, for the solver's sake) and, when something is ticked, held on its Aniimo too
         // (Fable review 3 F2: 5 Mines, 2 Aniimo up to level 2, personality on: 4 Mines in E-mode + the Maker on
@@ -972,7 +1132,9 @@
     if (ints.length) out.push("General", " " + ints.map((j) => "x" + j).join(" "));
     out.push("End");
     let r;
-    // globalThis.__highsTimeLimit: tests force the time cap with it (review 3 F1)
+    // globalThis.__highsTimeLimit: tests force the time cap with it (review 3 F1). Every search gets it whole: one 90 s
+    // budget shared by a plan's searches (up to 12, 30 when they run out of time) left a later step and its fallback
+    // 4 s each, which could end in "No plan" (review 2026-10-27, ChatGPT + Gemini; tests/waiting.test.mjs)
     const opts = typeof globalThis !== "undefined" && globalThis.__highsTimeLimit ? Object.assign({}, HIGHS_OPTIONS, { time_limit: globalThis.__highsTimeLimit }) : HIGHS_OPTIONS;
     try { r = HIGHS.solve(out.join("\n"), opts); } catch (e) { return null; }
     // HiGHS's presolve can call a feasible model infeasible: maxed RV 7 with the orders focus held 7 items step 1
@@ -1447,7 +1609,9 @@
       const lo = new Array(n).fill(0); lo[hBase + i] = -1; rows.push(lo); b.push(-inp._handE);
       const hi = new Array(n).fill(0); hi[hBase + i] = 1; rows.push(hi); b.push(inp._handE);
     });
-    rows.push(workerRow); b.push(Math.max(0, pool) - handAniimo);
+    // a fewest-Aniimo row (fewerRow): at most that many working Aniimo, by-hand makers and generators included
+    const room = inp._aniimoMax != null ? Math.min(pool, inp._aniimoMax) : pool;
+    rows.push(workerRow); b.push(Math.max(0, room) - handAniimo);
     if (gen) {
       // full 120%: power drawn x 1.2 <= power made, all generators on one pole network (their outputs add up,
       // HomelandEnvManager link groups); as whole numbers via 1.2 = 6/5
@@ -1559,6 +1723,12 @@
         const row = new Array(n).fill(0); oItems.forEach((x, k) => { row[oBase + k] = -x.share; }); rows.push(row); b.push(-ord.min);
       }
       else oItems.forEach((x, k) => { obj[oBase + k] = x.share * ord.big; });   // step 1: the board, then coin
+    }
+    // the fewest Aniimo (fewer()): this step's coin held at the goal plan's, and the working Aniimo as the objective.
+    // Only on a coin step (every goal's last step is one: the speed and the orders are held by their own rows).
+    if (inp._fewest) {
+      rows.push(obj.map((v) => -v)); b.push(-inp._fewest.floor);
+      obj.fill(0); workerRow.forEach((v, j) => { obj[j] = -v; });
     }
 
     const groups = facNames.map((f) => ({ count: inp.facilities[f].count, ys: whole.filter((j) => cols[j].fac === f).map((j) => yOf.get(j)) }))
@@ -1771,7 +1941,7 @@
       food: { eaters, needPerHour: foodNeed,
               // how long the eaten mix lasts per item fed (for "how often do I refill")
               hoursPerItem: eaten.length ? eaten.reduce((acc, e) => acc + e.food, 0) / eaten.reduce((acc, e) => acc + e.perHour, 0) / (foodNeed || 1) : 0 },
-      aniimo: { cap: inp.cap, reserved: inp.reserved, haulers: inp.haulers, pool, used,
+      aniimo: { cap: inp.cap, reserved: inp.reserved, haulers: inp.haulers, pool, used, limit: inp._aniimoMax != null ? inp._aniimoMax : null,
                 total: used.dedicated + used.bench + used.crop + used.devices + used.byHand + used.generators },
       abilityNeeds, abilitySpeed, timeLimit: timeLimit(),
     };
@@ -2135,7 +2305,9 @@
     D = released(D, (userInputs || {}).unreleased);
     const levels = bestAbilityLevels(D, includePrismana);
     const fams = bestFamilyLevels(D, includePrismana);
-    return Object.assign(plan(D, Object.assign({}, userInputs, { abilityLevels: levels, familyLevels: fams, personality: true })),
+    // the goal with the best Aniimo, never the fewest-Aniimo table: that ran the fewest search (and a picked row) again
+    // for one coin line, 2.3 s -> 7 s and 14 s at RV 17 (Fable gate 2026-10-24); the page compares it with the goal
+    return Object.assign(plan(D, Object.assign({}, userInputs, { abilityLevels: levels, familyLevels: fams, personality: true, fewerAniimo: false })),
       { abilityLevels: levels, familyLevels: fams });
   }
 
@@ -2287,6 +2459,7 @@
   }
 
   const api = { coverage, coverFits, plan, fullTimeIngredient, rvLimits, wholeCounts, idealPersonality, alternatives, defaults, workPerMinute, recipeChoices, candidates, bestAbilityLevels, bestCase, idealRoster, roster, formLabel, parseJob, familyBest, released, rvChain, rvTime, orderPool, activeSeason, betterOrders, afterRetry, orderTaken, seedPrice, useSolver,
+    fewerRow, fewerStop, fewerLoss, fewerPick, FEWER_ROWS,
     lineMoney, solverName: () => (HIGHS ? "HiGHS" : "built-in"), solverTimeLimit: timeLimit };
   if (typeof module !== "undefined") module.exports = api; else root.Planner = api;
 })(this);

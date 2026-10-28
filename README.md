@@ -41,6 +41,13 @@ your browser. The website counts visits anonymously with [GoatCounter](https://w
 
 **October 2026**
 
+- Long plans now tell you what is happening: after 30 seconds the page says it is still loading, after 60 seconds
+  that the setup takes long to plan, and a plan that had to stop searching says so, with the time it took. In Simple
+  mode too.
+- New in Advanced, under **Goal**: tick "Use as few Aniimo as possible" and the plan keeps your goal (the most coin,
+  the fastest upgrade or the most orders) while using the fewest Aniimo that still earn the same coin, with power
+  running machines in their place (on an RV 17 setup: 36 Aniimo down to 28, same coin). A table under it shows one
+  Aniimo fewer per row and the coin each costs; click a row to use that plan.
 - New in Advanced, under **Goal**: tick "Plan to fill the most orders" and the plan makes as many of the items
   daily orders ask for as it can, the most asked first, then the most coin (or the fastest upgrade, if that is
   ticked). It says how much of the order board it fills, how much coin that costs, and why it cannot fill the rest.

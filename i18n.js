@@ -137,6 +137,36 @@
       "Essa renda vem de um plano à parte, feito para os melhores Aniimo; a equipe abaixo é para o plano desta página.",
     "The orders focus needs the HiGHS solver, which did not load: this is the plan without it.":
       "O foco em pedidos precisa do resolvedor HiGHS, que não carregou: este é o plano sem ele.",
+    // fewest Aniimo (2026-10-24): the tick under Goal and its table
+    "Use as few Aniimo as possible": "Usar o mínimo de Aniimo possível",
+    "Power runs machines in their place, and the goal above stays the same. Pick a row in the Fewer Aniimo table to give up coin for fewer Aniimo.":
+      "A energia faz as máquinas funcionarem no lugar deles, e o objetivo acima continua o mesmo. Escolha uma linha na tabela Menos Aniimo para trocar renda por menos Aniimo.",
+    "Fewer Aniimo": "Menos Aniimo",
+    "Click a row to use that plan.": "Clique numa linha para usar esse plano.",
+    "Aniimo working": "Aniimo trabalhando",
+    "Home Coin / hour": "Moedas do Lar / hora",
+    "Change": "Diferença",
+    "no coin lost": "sem perder renda",
+    "no power": "sem energia",
+    "1 generator runs {0} machines": "1 gerador move {0} máquinas",
+    "{0} generators run {1} machines": "{0} geradores movem {1} máquinas",
+    "Working out the next row…": "Calculando a próxima linha…",
+    "under 0.1%": "menos de 0,1%",
+    "Stops here: one Aniimo fewer would lose more than 10% of the coin.": "Para aqui: um Aniimo a menos perderia mais de 10% da renda.",
+    "Stops here: with one Aniimo fewer the goal cannot be kept.": "Para aqui: com um Aniimo a menos o objetivo não se mantém.",
+    "The next row could not be planned.": "A próxima linha não pôde ser planejada.",
+    "Stops here: the next row could not be worked out in time.": "Para aqui: a próxima linha não foi calculada a tempo.",
+    "The fewest Aniimo was not found within {0} s: the table starts at this plan's own Aniimo.":
+      "O mínimo de Aniimo não foi encontrado em {0} s: a tabela começa nos Aniimo deste plano.",
+    "The fewest Aniimo could not be planned: the table starts at this plan's own Aniimo.":
+      "Não foi possível planejar o mínimo de Aniimo: a tabela começa nos Aniimo deste plano.",
+    "Your pick of {0} Aniimo cannot keep the goal: this is the first row.": "Sua escolha de {0} Aniimo não mantém o objetivo: esta é a primeira linha.",
+    "Your pick of {0} Aniimo could not be worked out in time: this is the first row.": "Sua escolha de {0} Aniimo não foi calculada a tempo: esta é a primeira linha.",
+    "Your pick of {0} Aniimo could not be planned: this is the first row.": "Não foi possível planejar sua escolha de {0} Aniimo: esta é a primeira linha.",
+    "{0} Aniimo working": "{0} Aniimo trabalhando",
+    "fewest Aniimo": "menos Aniimo",
+    "The fewest Aniimo needs the HiGHS solver, which did not load: this is the plan without it.":
+      "O mínimo de Aniimo precisa do resolvedor HiGHS, que não carregou: este é o plano sem ele.",
     "The orders could not be planned: this is the plan without the orders focus.":
       "Não foi possível planejar os pedidos: este é o plano sem o foco em pedidos.",
     "Recipes you have": "Receitas que você tem",
@@ -307,6 +337,7 @@
     "{0} Home Coin / hour with the best Aniimo": "{0} Moedas do Lar / hora com os melhores Aniimo",
     "({0} / day)": "({0} / dia)",
     "{0} / hour vs your current plan": "{0} / hora contra seu plano atual",
+    "{0} / hour vs your goal": "{0} / hora contra seu objetivo",
     "Same facilities, RV and options; every job gets the highest ability level that exists {0}, with a matching personality.":
       "Mesmas instalações, Motorhome e opções; cada trabalho recebe o maior nível de habilidade que existe {0}, com a personalidade certa.",
     "(Prismana forms included)": "(com formas Prismana)",
@@ -341,6 +372,11 @@
       "Precisa de um Aniimo livre para essas bancadas; a contagem de Aniimo do plano não inclui eles.",
     // planner messages (translated by pattern in msg())
     "Planning…": "Planejando…",
+    "Still loading... Please wait, do not press F5.": "Ainda carregando... Aguarde, não aperte F5.",
+    "Still loading... This setup takes a long time to plan. Fewer ticked options plan faster.":
+      "Ainda carregando... Esta configuração demora para ser planejada. Com menos opções marcadas o plano sai mais rápido.",
+    "Your device took long to plan this setup: this is the best plan found in {0} s.":
+      "Seu aparelho demorou para planejar esta configuração: este é o melhor plano encontrado em {0} s.",
     "error": "erro",
     "No plan with whole plots fits these Aniimo.": "Nenhum plano com lotes inteiros cabe nesses Aniimo.",
     "No plan found within {0} s. Try fewer options or a smaller layout.": "Nenhum plano encontrado em {0} s. Tente menos opções ou um layout menor.",
@@ -423,6 +459,7 @@
         const rules = [
           [/^No Aniimo has (.+) at level 4: planned at level 3\.$/, (m) => T("No Aniimo has {0} at level 4: planned at level 3.", m[1].split(", ").map((x) => N.ab(x)).join(", "))],
           [/^No plan found within (\d+) s\./, (m) => T("No plan found within {0} s. Try fewer options or a smaller layout.", m[1])],
+          [/^The fewest Aniimo was not found within (\d+) s:/, (m) => T("The fewest Aniimo was not found within {0} s: the table starts at this plan's own Aniimo.", m[1])],
           [/^No Aniimo left for production: cap - reserved - haulers is (.+)\.$/, (m) => T("No Aniimo left for production: cap - reserved - haulers is {0}.", m[1])],
           [/^(.+) level (\d+) needs (.+) level \d+: planning with level (\d+)\.$/, (m) => T("{0} level {1} needs {2} level {1}: planning with level {3}.", N.fac(m[1]), m[2], (pt() && pt().modules[m[3]]) || m[3], m[4])],
           [/^(.+) level (\d+) needs RV (\d+)\.$/, (m) => T("{0} level {1} needs RV {2}.", N.fac(m[1]), m[2], m[3])],

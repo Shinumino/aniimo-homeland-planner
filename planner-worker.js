@@ -3,7 +3,7 @@
 // and then 6 s more for the best case, and still stopped HiGHS at 4 s with a plan up to 13,000 coin/h short of
 // the best (cross-model audit round 2). Here the page stays usable, so HiGHS gets 30 s: RV 16-20 finish in 6-10 s.
 //
-// Messages: { id, kind: "plan" | "best" | "map", inputs, prismana } -> { id, ok, result } or { id, ok: false, error }.
+// Messages: { id, kind: "plan" | "best" | "map" | "fewerRow", inputs, prismana } -> { id, ok, result } or { id, ok: false, error }.
 // The page falls back to planning on its own thread when a Worker cannot start (opened from file://).
 self.window = self;                                // data.js and highs-wasm.js set window.*
 self.__highsTimeLimit = 30;                        // read by planner.js solveHighs (globalThis.__highsTimeLimit)
@@ -24,7 +24,9 @@ self.onmessage = (e) => {
   ready.then(() => {
     try {
       // "map": the base map of a plan already made (homemap.js), placed off the page's thread like the plans
+      // "fewerRow": one more row of the fewest-Aniimo table, from what the first plan handed back
       const result = kind === "best" ? P.bestCase(D, inputs, prismana)
+        : kind === "fewerRow" ? P.fewerRow(D, inputs.inputs, inputs.ctx, inputs.n)
         : kind === "map" ? self.HomeMap.buildMap(D, inputs.plan, { roster: P.roster(P.released(D, inputs.unreleased), inputs.plan, prismana) })
         : P.plan(D, inputs);
       self.postMessage({ id, ok: true, result });

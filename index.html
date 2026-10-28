@@ -114,6 +114,10 @@
   body.simple main { grid-template-columns: 1fr; max-width: 1100px; margin: 0 auto; }
   body.simple #planTable th:nth-child(n+4), body.simple #lines td:nth-child(n+4) { display: none; }
   body.simple #best .hint { display: none; }
+  /* the fewest-Aniimo table: each row is a plan to pick */
+  #fewerInfo tr[data-n] { cursor: pointer; }
+  #fewerInfo tr[data-n]:hover td { background: var(--bg); }
+  #fewerInfo tr.picked td { background: var(--accent-soft); font-weight: 600; }
   body.simple .nothing { display: none; }   /* a devices / power panel with nothing to place */
   .modebtn { margin-top: 4px; }
   .makes { display: inline-flex; align-items: center; gap: 2px; flex-wrap: wrap; }
@@ -226,6 +230,9 @@
       <div class="hint" id="shareHint">Each bench keeps one recipe, but two or more benches can use the same ingredient. In the game the first free bench takes it, so what those benches make is an estimate.</div>
       <label class="row" id="shareCapRow">Share at most this many ingredients (blank = no limit, 0 = none) <input type="number" id="shareCap" min="0" step="1"></label>
       </div>
+      <!-- fewest Aniimo (user, 2026-10-24): on top of whichever goal is above -->
+      <label class="check"><input type="checkbox" id="fewerAniimo"> Use as few Aniimo as possible</label>
+      <div class="hint" id="fewerHint">Power runs machines in their place, and the goal above stays the same. Pick a row in the Fewer Aniimo table to give up coin for fewer Aniimo.</div>
     </section>
 
     <section class="panel adv" id="makePanel">
@@ -293,11 +300,14 @@
   </div>
 
   <div id="results">
+    <!-- still planning after 30 s / 60 s (user, 2026-10-27): in both modes, where "Planning…" is Advanced only -->
+    <div id="waiting" class="warn"></div>
     <div id="warnings"></div>
     <div id="sharedInfo"></div>
     <!-- the goal's results before the plan (they were inside the settings) -->
     <section class="panel adv" id="ordersResult"><h2>Orders</h2><div id="ordersInfo"></div></section>
     <section class="panel adv" id="rvResult"><h2>Next RV level</h2><div id="rvInfo"></div></section>
+    <section class="panel adv" id="fewerResult"><h2>Fewer Aniimo</h2><div id="fewerInfo"></div></section>
     <section class="panel adv">
       <h2>Aniimo budget</h2>
       <div id="budget"></div>
@@ -394,6 +404,8 @@
     rv: 11, cap: 32, reserved: 2, haulers: 2, homeAniimo: "", minFoodPerItem: 0, workerMaxLevel: 3, personality: false, power: true,
     watered: true, feed: true, eventSeeds: true, oneRecipePerBench: true, unreleased: ["Jabster"], rvGoal: { level: "" }, cropOpOverhead: 0.5, notes: [], keep: {}, aniipods: [], moonrayWheat: false,
     ordersFocus: false, seasonOrders: false, seasonPerDay: "", shareIngredients: false, shareCap: 4,
+    // fewest Aniimo: the tick, and the row picked in its table (Aniimo working; null = the first row)
+    fewerAniimo: false, fewerPick: null,
     // Signal Transmitter Lv 2 (RV 11 max): its 2 RV Park places make the default cap of 32 add up
     modules: { "Ecological Module": 3, "Kitchen Module": 4, "Resource Detector": 2, "Crafting Module": 3, "Signal Transmitter": 2 },
     facilities: {
@@ -440,8 +452,10 @@
     for (const k of ["cap", "reserved", "haulers", "minFoodPerItem", "cropOpOverhead"]) take(k, nonNeg);
     take("workerMaxLevel", (v) => (v === "" ? "" : whole(1, 4)(v)));
     take("homeAniimo", (v) => (v === "" || v === null ? "" : nonNeg(v)));
-    for (const k of ["personality", "power", "watered", "feed", "eventSeeds", "oneRecipePerBench", "moonrayWheat", "devices", "bestPrismana", "fastRv", "ordersFocus", "seasonOrders", "shareIngredients"]) take(k, bool);
+    for (const k of ["personality", "power", "watered", "feed", "eventSeeds", "oneRecipePerBench", "moonrayWheat", "devices", "bestPrismana", "fastRv", "ordersFocus", "seasonOrders", "shareIngredients", "fewerAniimo"]) take(k, bool);
     take("seasonPerDay", nonNeg);
+    // 0 or less is no pick: clamped to 1 it planned a one-Aniimo row (Fable gate 2026-10-24; the page never writes it)
+    take("fewerPick", (v) => { if (v === null || v === "") return null; const n = whole(0, 999)(v); return n === undefined ? undefined : n >= 1 ? n : null; });
     take("shareCap", nonNeg);
     const facs = {};
     for (const [n, f] of Object.entries(s.facilities)) {
@@ -965,7 +979,7 @@
         $("warnings").insertAdjacentHTML("afterbegin", `<div class="warn">${T("That file is not a setup file.")}</div>`);
         return;
       }
-      S = s; renderAll();
+      S = s; renderAll(false, true);              // the file's own pick, if it has one
     });
   };
   $("reset").onclick = () => { fresh(); renderAll(); };
@@ -998,6 +1012,7 @@
   window.__solverWhere = "page";
   const onPage = (kind, inputs, prismana) => solverReady.then(() => new Promise((resolve) => setTimeout(resolve, 0)))
     .then(() => (kind === "best" ? P.bestCase(D, inputs, prismana)
+      : kind === "fewerRow" ? P.fewerRow(D, inputs.inputs, inputs.ctx, inputs.n)
       : kind === "map" ? window.HomeMap.buildMap(D, inputs.plan, { roster: P.roster(P.released(D, inputs.unreleased), inputs.plan, prismana), fast: true })
       : P.plan(D, inputs)));
   function startWorker() {
@@ -1036,7 +1051,13 @@
   // (audit r2, ChatGPT; tests/smoke_orders.py). The goal readouts follow the ticks at once too: the headline's goal
   // line kept the old share and upgrade time through the re-plan, and the phone's folded line the old goal, for good
   // when the plan then failed (release audit r1, ChatGPT Astra; tests/smoke_layout.py).
-  function recalc() {
+  // keepPick: the row picked in the fewest-Aniimo table goes back to the first row on any change (user, 2026-10-24),
+  // except where nothing was changed by hand: the page opening, a setup file loaded, a language switch (renderAll).
+  function recalc(keepPick) {
+    if (!keepPick) S.fewerPick = null;
+    // the table is for the old setup from now on: in the 80 ms before run() a click on it showed a plan of the old
+    // setup (audit r1, Gemini)
+    fewerState = null; renderFewer();
     save(); runToken++; clearTimeout(timer); timer = setTimeout(() => solverReady.then(run), 80);
     $("goalLine").textContent = shownPlan ? goalLine(shownPlan) : ""; setupFold(false);
   }
@@ -1045,7 +1066,8 @@
     // now: the season box counts only while the season runs (the planner never reads the clock)
     const inp = Object.assign({}, S, { homeAniimo: S.homeAniimo === "" ? null : S.homeAniimo,
       workerMaxLevel: Number(S.workerMaxLevel) || 3, fastRv: S.fastRv ? goalLevel() : null,
-      ordersFocus: S.ordersFocus === true, seasonOrders: S.seasonOrders === true, shareIngredients: S.shareIngredients === true, now: nowSec() });
+      ordersFocus: S.ordersFocus === true, seasonOrders: S.seasonOrders === true, shareIngredients: S.shareIngredients === true,
+      fewerAniimo: S.fewerAniimo === true, now: nowSec() });
     const facs = {};
     for (const [n, f] of Object.entries(S.facilities)) if (f.count > 0) facs[n] = f;
     const pods = byHandOn();
@@ -1066,10 +1088,128 @@
     cancelSolves();
     mapToken++; layoutBusy = true;                // a map on its way is for the old plan; the next waits for the new best case
     $("subline").textContent = T("Planning…");
+    waiting(true);
+    fewerState = null; fewerRows = new Map(); renderFewer();   // the old table was for the old inputs
     // a failed solve is shown like any plan that could not be made: it only wrote "No plan" in the header, so the old
     // rows, rosters and budget stayed up, and Simple (no header) said nothing (release audit r1, ChatGPT Astra)
-    solve("plan", inp).then((p) => { if (token === runToken) show(inp, p, performance.now() - t0); },
-      (err) => { if (token === runToken) show(inp, { status: String(err && err.message || err), warnings: [] }, performance.now() - t0); });
+    solve("plan", inp).then((p) => {
+      if (token !== runToken) return;
+      waiting(false);
+      const ms = performance.now() - t0;
+      startFewer(inp, p, ms); show(inp, p, ms); fillFewer(token);
+    }, (err) => { if (token === runToken) { waiting(false); show(inp, { status: String(err && err.message || err), warnings: [] }, performance.now() - t0); } });
+  }
+
+  // Still planning after 30 s, then 60 s (user, 2026-10-27): the player is told the page is working, not broken. Each
+  // search still stops at its own 30 s (planner-worker.js), and a plan that stopped at one is marked `slow` (planner.js
+  // plan()); show() then says so, with the wait measured here. A new run starts the count again: it cancels the plan
+  // before it (cancelSolves).
+  // Planning on the page's own thread (no Worker: opened from file://, or the Worker failed), nothing can be drawn
+  // until the plan is done, so these lines never show there (review 2026-10-27, ChatGPT): that page is frozen anyway.
+  // Off switch (one value in the code, as the user chose for this feature): an empty WAIT_LINES.
+  const WAIT_LINES = [[30000, "Still loading... Please wait, do not press F5."],
+    [60000, "Still loading... This setup takes a long time to plan. Fewer ticked options plan faster."]];
+  let waitTimers = [];
+  function waiting(on) {
+    waitTimers.forEach(clearTimeout); waitTimers = [];
+    $("waiting").textContent = "";
+    if (!on) return;
+    waitTimers = WAIT_LINES.map(([ms, s]) => setTimeout(() => { $("waiting").textContent = T(s); }, ms));
+  }
+
+  // Fewest Aniimo (user, 2026-10-24): ticked, the plan shown is the table's first row (the goal, with the fewest Aniimo
+  // that keep its coin) or the row picked before; the other rows are worked out after it, one Worker job each, so the
+  // first plan is never held back by the table (user: "no-loss plan first, rows fill in"). A row is a whole plan: a
+  // click shows it at once from here, nothing is planned again. The table stops at 8 rows, at a row 10% under the
+  // goal's coin, at one that cannot keep the goal, or one not found in time, and says which (P.fewerStop). The pick is a number of Aniimo working, saved
+  // like any setting; unticking the box clears it.
+  let fewerState = null, fewerRows = new Map();   // { n0, goal, ctx, inputs, list, done, pickFailed }; n -> plan
+  function startFewer(inp, p, ms) {
+    if (p.status !== "optimal" || !p.fewer) { fewerState = null; return; }
+    const f = p.fewer;
+    // pickFail: a saved pick that could not be planned, and why (the planner says; audit r2, Gemini)
+    fewerState = { n0: f.n0, goal: f.goal, ctx: f.ctx, inputs: inp, list: [], done: "", pickFailed: f.pickFail || null };
+    p.ms = ms; fewerRows.set(f.n, p);
+    // the first row came with a picked one: not solved again (audit r2, Gemini)
+    if (f.first && f.first.status === "optimal") {
+      f.first.fewer = { n0: f.n0, n: f.n0, goal: f.goal, ctx: f.ctx }; f.first.ms = ms; fewerRows.set(f.n0, f.first);
+    }
+  }
+  function fillFewer(token) {
+    const st = fewerState;
+    if (!st) return;                               // run() calls it after every plan, ticked or not
+    const live = () => token === runToken && st === fewerState;
+    const next = () => {
+      if (!live() || st.done) return;
+      if (st.list.length >= P.FEWER_ROWS) { st.done = "rows"; renderFewer(); return; }
+      const n = st.n0 - st.list.length;
+      const take = (r) => {
+        const stop = P.fewerStop(st.goal, r);
+        if (stop) { st.done = stop; renderFewer(); return; }
+        st.list.push(n); renderFewer(); next();
+      };
+      if (fewerRows.has(n)) return take(fewerRows.get(n));
+      const t0 = performance.now();
+      solve("fewerRow", { inputs: st.inputs, ctx: st.ctx, n }).then((r) => {
+        if (!live()) return;
+        if (r && r.status === "optimal") { r.ms = performance.now() - t0; r.fewer = { n0: st.n0, n, goal: st.goal, ctx: st.ctx }; fewerRows.set(n, r); }
+        take(r);
+      }, () => { if (live()) { st.done = "error"; renderFewer(); } });
+    };
+    next();
+  }
+  function pickRow(n) {
+    const q = fewerRows.get(n);
+    if (!q || !fewerState || !shownPlan || !shownPlan.fewer || n === shownPlan.fewer.n) return;
+    S.fewerPick = n === fewerState.n0 ? null : n; save();
+    fewerState.pickFailed = null;
+    q.fewer = { n0: fewerState.n0, n, goal: fewerState.goal, ctx: fewerState.ctx };
+    show(Object.assign({}, lastInputs, { fewerPick: S.fewerPick }), q, q.ms || 0);
+  }
+  function renderFewer() {
+    const st = fewerState, p = shownPlan;
+    const on = !!(S.fewerAniimo && st && p && p.fewer);
+    $("fewerResult").style.display = on ? "" : "none";
+    if (!on) { $("fewerInfo").innerHTML = ""; return; }
+    const ns = st.list.slice();
+    if (!ns.includes(p.fewer.n)) ns.push(p.fewer.n);   // a pick below the rows worked out so far
+    ns.sort((a, b) => b - a);
+    const onPower = (q) => {
+      const g = (q.power && q.power.generators) || 0;
+      const m = q.lines.filter((l) => l.kind === "electric").reduce((a, l) => a + l.benches, 0) + (q.byHand || []).filter((h) => h.mode === "E-mode").length;
+      return !g ? T("no power") : g === 1 ? T("1 generator runs {0} machines", fmt(m)) : T("{0} generators run {1} machines", g, fmt(m));
+    };
+    const row = (n) => {
+      const q = fewerRows.get(n);
+      // a loss under 0.05% printed "-0.0%" (float check, user 2026-10-27): "under 0.1%"; none, or under +0.05%: "no coin
+      // lost"; a gain (rows can beat a goal that ran out of time) with its plus: the first fix put "under 0.1%" on both
+      // (review 2026-10-27, ChatGPT: +1.0% read "under 0.1%")
+      const loss = P.fewerLoss(st.goal, q) * 100;
+      const change = n === st.n0 || (loss >= 0 && loss < 0.05) ? T("no coin lost")
+        : loss >= 0.05 ? "+" + fmt(loss, 1) + "%" : loss > -0.05 ? T("under 0.1%") : fmt(loss, 1) + "%";
+      return `<tr data-n="${n}" class="${n === p.fewer.n ? "picked" : ""}"><td class="num">${n}</td><td class="num">${fmt(q.coinPerHour)}</td>
+        <td class="num">${change}</td><td>${onPower(q)}</td></tr>`;
+    };
+    const pending = !st.done ? `<tr><td colspan="4" class="muted">${T("Working out the next row…")}</td></tr>` : "";
+    const end = st.done === "coin" ? T("Stops here: one Aniimo fewer would lose more than 10% of the coin.")
+      : st.done === "goal" ? T("Stops here: with one Aniimo fewer the goal cannot be kept.")
+      : st.done === "time" ? T("Stops here: the next row could not be worked out in time.")
+      : st.done === "error" ? T("The next row could not be planned.") : "";
+    const pf = st.pickFailed;
+    const pickWarn = !pf ? "" : pf.why === "goal" ? T("Your pick of {0} Aniimo cannot keep the goal: this is the first row.", pf.n)
+      : pf.why === "time" ? T("Your pick of {0} Aniimo could not be worked out in time: this is the first row.", pf.n)
+      : T("Your pick of {0} Aniimo could not be planned: this is the first row.", pf.n);
+    $("fewerInfo").innerHTML = (pickWarn ? `<div class="warn">${pickWarn}</div>` : "")
+      + `<div class="hint">${T("Click a row to use that plan.")}</div>
+      <div class="tablewrap"><table><thead><tr><th class="num">${T("Aniimo working")}</th><th class="num">${T("Home Coin / hour")}</th>
+        <th class="num">${T("Change")}</th><th>${T("Power")}</th></tr></thead><tbody>${ns.map(row).join("")}${pending}</tbody></table></div>`
+      + (end ? `<div class="muted fewer-end">${end}</div>` : "");
+    for (const tr of $("fewerInfo").querySelectorAll("tr[data-n]")) tr.onclick = () => pickRow(Number(tr.dataset.n));
+  }
+  function renderFewerTick() {
+    const fa = $("fewerAniimo");
+    fa.checked = !!S.fewerAniimo;
+    fa.onchange = () => { S.fewerAniimo = fa.checked; S.fewerPick = null; fewerState = null; renderFewer(); recalc(); };
   }
 
   // The goal's result next to the coin in the headline (user, 2026-10-19): the share of the order board the plan
@@ -1080,6 +1220,7 @@
     const parts = [];
     if (S.ordersFocus && p.orders) parts.push(T("Orders: {0} filled", fmt(p.orders.share * 100) + "%"));
     if (S.fastRv && p.fastRv && p.fastRv.reachable) parts.push(T("RV {0} in {1}", p.fastRv.level, dur(p.fastRv.readyHours + p.fastRv.upgradeHours)));
+    if (S.fewerAniimo && p.fewer) parts.push(T("{0} Aniimo working", p.fewer.n));
     return parts.join(" · ");
   }
 
@@ -1093,7 +1234,7 @@
     else if (reset) box.open = firstVisit;
     const goal = S.ordersFocus ? (S.fastRv ? T("orders, then the fastest upgrade") : T("orders, then coin"))
       : S.fastRv ? T("the fastest upgrade") : T("the most coin");
-    $("setupSummary").textContent = T("Your setup: RV {0} · goal: {1}", S.rv, goal);
+    $("setupSummary").textContent = T("Your setup: RV {0} · goal: {1}", S.rv, goal + (S.fewerAniimo ? ", " + T("fewest Aniimo") : ""));
   }
   // crossing 900 px (a window narrowed, a tablet turned) leaves the box as it is: it closed the settings under the
   // player (Fable gate 2026-10-20). The fold by itself is for a page that opens at phone width.
@@ -1103,6 +1244,15 @@
     lastInputs = inp;
 
     $("warnings").innerHTML = (p.warnings || []).map((w) => `<div class="warn">${N.msg(w)}</div>`).join("");
+    // a search of this plan stopped at its time limit (planner.js plan(), `slow`): said with the wait the page measured,
+    // `ms` from the start of the run (user, 2026-10-27: the real time waited), a Worker that crashed and the page
+    // planning again included (review r2, ChatGPT); for a clicked row, that row's own job
+    if (p.slow) {
+      const d = document.createElement("div");
+      d.className = "warn";
+      d.textContent = T("Your device took long to plan this setup: this is the best plan found in {0} s.", Math.max(1, Math.round(ms / 1000)));
+      $("warnings").appendChild(d);
+    }
     $("sharedInfo").innerHTML = sharedHtml(p);
     // general note when a ticked full-time facility uses ingredients (user, 2026-10-03); the plan's own warning
     // names the benches only when unticking them would really earn more
@@ -1124,13 +1274,14 @@
       $("warnings").insertAdjacentHTML("afterbegin", `<div class="warn simple-only"><b>${T("No plan")}</b> · <span></span></div>`);
       $("warnings").querySelector(".simple-only span").textContent = T(p.status);
       $("budget").innerHTML = "";
-      renderRvInfo(p); renderOrders(p);
+      renderRvInfo(p); renderOrders(p); renderFewer();
       return;
     }
     $("headline").textContent = T("{0} Home Coin / hour", fmt(p.coinPerHour));
     $("goalLine").textContent = goalLine(p);
+    // a plan stopped at its time limit says so in the warnings, in both modes (show(), `slow`; user 2026-10-27):
+    // "best found in N s" here was Advanced only, and would now say it twice
     $("subline").textContent = T("{0} per day · solved in {1} ms ({2})", fmt(p.coinPerDay), fmt(ms), T(P.solverName()));
-    if (p.capped) $("subline").textContent += T(" · best found in {0} s", p.timeLimit || P.solverTimeLimit());
 
     const u = p.aniimo.used, pool = Math.max(p.aniimo.pool, 0.0001);
     const seg = (v, c) => `<span style="width:${Math.min(100, v / pool * 100)}%;background:${c}"></span>`;
@@ -1197,6 +1348,7 @@
     renderRest(p);
     shownPlan = p; layoutBusy = true;             // renderRest asks for the best case; the map comes after it
     drawLayout();
+    renderFewer();                                 // after shownPlan: the table marks the row on screen
   }
 
   // Base layout (Dan-801, 2026-10-09: "a 2D plan with where the machines go"). Under the map, each device placed
@@ -1554,26 +1706,32 @@
     if (!lastInputs) { bestSettled(current, runToken); return; }
     const token = runToken;
     $("best").innerHTML = `<div class="muted">${T("Planning…")}</div>`;
-    solve("best", lastInputs, !!S.bestPrismana).then((b) => { if (token === runToken) showBest(current, b); },
+    // and only for the plan still on screen: a click on a row of the fewest-Aniimo table changes the plan without a new
+    // run, and the last row's best case, still on its way, was painted under it (audit r1, ChatGPT + Gemini)
+    solve("best", lastInputs, !!S.bestPrismana).then((b) => { if (token === runToken && current === shownPlan) showBest(current, b); },
       // a best case that fails in the Worker left "Planning…" up until the next change (Fable, pre-release audit)
-      (err) => { if (token === runToken) $("best").innerHTML = `<div class="muted">${T("No best-case plan: {0}", T("error"))}</div>`; })
+      // (the same for a failure: an old row's failed best case painted "No best-case plan" under the new row; audit r2, ChatGPT)
+      (err) => { if (token === runToken && current === shownPlan) $("best").innerHTML = `<div class="muted">${T("No best-case plan: {0}", T("error"))}</div>`; })
       .then(() => bestSettled(current, token), () => bestSettled(current, token));   // either way the Worker is free: the Base layout map may go
   }
   function showBest(current, b) {
     if (b.status !== "optimal") { $("best").innerHTML = `<div class="muted">${T("No best-case plan: {0}", T(b.status))}</div>`; return; }
-    const gain = b.coinPerHour - current.coinPerHour;
+    // with the fewest-Aniimo box the best case is the GOAL with the best Aniimo (bestCase), so it is compared with the
+    // goal: against a picked row it said "+3,062 vs your current plan" at RV 17, the coin the pick gave up (user, 2026-10-24)
+    const vsGoal = !!(S.fewerAniimo && current.fewer);
+    const gain = b.coinPerHour - (vsGoal ? current.fewer.goal.coinPerHour : current.coinPerHour);
     // The roster here is the best Aniimo for the plan SHOWN (idealRoster): the best-case plan re-plans, and from
     // RV 12 up it drops the generators the shown plan places (cross-model audit 2026-10-02). Only the coin line
     // comes from that re-plan. The job-by-job list of every Aniimo that could do it is gone (user: too much text).
     const ideal = P.idealRoster(pool(), current, !!S.bestPrismana);
     $("best").innerHTML = `<div class="adv"><div class="row"><span>${T("{0} Home Coin / hour with the best Aniimo", "<b>" + fmt(b.coinPerHour) + "</b>")}
-        ${T("({0} / day)", fmt(b.coinPerDay))}</span><span class="${gain > 0 ? "" : "muted"}">${T("{0} / hour vs your current plan", (gain >= 0 ? "+" : "") + fmt(gain))}</span></div>
+        ${T("({0} / day)", fmt(b.coinPerDay))}</span><span class="${gain > 0 ? "" : "muted"}">${T(vsGoal ? "{0} / hour vs your goal" : "{0} / hour vs your current plan", (gain >= 0 ? "+" : "") + fmt(gain))}</span></div>
       ${b.capped ? `<div class="hint">${T(" · best found in {0} s", b.timeLimit || P.solverTimeLimit()).replace(/^ · /, "")}</div>` : ""}
       <div class="hint">${T("That coin is from a separate plan made for the best Aniimo; the roster below is for the plan on this page.")}</div></div>`
       + window.__rosterHtml(ideal.basis, T("Ideal roster"), ideal);   // the headings' names (release audit r2, ChatGPT Astra)
   }
 
-  function renderAll(keepFolds) {
+  function renderAll(keepFolds, keepPick) {
     save();
     $("rv").value = S.rv;
     for (const [id, key] of [["cap", "cap"], ["reserved", "reserved"], ["haulers", "haulers"], ["homeAniimo", "homeAniimo"], ["minFoodPerItem", "minFoodPerItem"], ["cropOpOverhead", "cropOpOverhead"]]) bindNumber(id, key);
@@ -1584,11 +1742,11 @@
     const orb = $("oneRecipePerBench"); orb.checked = !!S.oneRecipePerBench;
     orb.onchange = () => { S.oneRecipePerBench = orb.checked; renderOrders(null); recalc(); };
     capHint();
-    renderFacilities(); renderModules(); renderDedicated(); renderDevices(); renderNotes(); renderUnreleased(); renderAniipods(); renderRvGoal(); renderOrders(null); renderRecipes();
+    renderFacilities(); renderModules(); renderDedicated(); renderDevices(); renderNotes(); renderUnreleased(); renderAniipods(); renderRvGoal(); renderOrders(null); renderFewerTick(); renderRecipes();
     // keepFolds: a language switch leaves the folds the player opened (it folded them again; Fable gate 2026-10-20);
     // an RV change, Fill to max, a setup file and Reset set them from the RV's max
     renderEventSeeds(); foldSummaries(!keepFolds);
-    recalc();
+    recalc(keepPick);
   }
 
   const buildInfo = () => { $("buildInfo").textContent = T("Game data build {0} · runs entirely on this PC", D.build); };
@@ -1600,14 +1758,14 @@
     window.I18N.setLang(langSel.value);
     window.I18N.translatePage(document.body);
     relabelLayout();
-    buildInfo(); buildRv(); renderAll(true);
+    buildInfo(); buildRv(); renderAll(true, true);
   };
   $("advancedBtn").onclick = () => setMode("advanced");
   $("simpleBtn").onclick = () => setMode("simple");
   document.body.classList.toggle("simple", simple);
   if (firstVisit) fresh();
   buildRv();
-  renderAll();
+  renderAll(false, true);                          // the page opening is no change: a saved pick stays
   setupFold(true);
 })();
 </script>

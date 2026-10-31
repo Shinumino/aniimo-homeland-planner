@@ -100,6 +100,35 @@
     return ((D.orders || {}).seasons || []).find((s) => t >= s.start && t < s.end) || null;
   }
 
+  // The first date after `now` at which what is on offer changes: a recipe window or a season starts or ends (both
+  // [start, end), the game's start <= time < end), or a seed's sale window does ([start, end], so it changes at start
+  // and the second after end). A plan, the recipe list and the season row are made for one date, so the page makes
+  // them again there (season-2 audit round 1, 2026-10-31; user: "Re-plan at the edge"). null: no date given, or no
+  // edge after it.
+  function nextEdge(D, now) {
+    const t = Number(now);
+    if (now == null || !Number.isFinite(t)) return null;
+    let next = null;
+    const see = (e) => { if (e != null && e > t && (next === null || e < next)) next = e; };
+    for (const r of D.recipes || []) if (r.win) { see(r.win[0]); see(r.win[1]); }
+    for (const s of (D.orders || {}).seasons || []) { see(s.start); see(s.end); }
+    for (const rows of Object.values(D.seedShop || {})) for (const row of rows) if (row.win) {
+      see(row.win[0]);
+      if (row.win[1] != null) see(row.win[1] + 1);
+    }
+    return next;
+  }
+
+  // A seed row's sale window [start, end] (either may be null: open on that side), as the game's isPropInLimitTime /
+  // TimeUtils.isInRangeTimestamp checks it: start <= now <= end, the END SECOND INCLUDED, unlike a recipe window
+  // (pinned in tests/fixtures/game_rules.json; Fable gate note 2, 2026-10-31). No date: not on sale.
+  function onSale(row, now) {
+    if (!row.win) return true;
+    const t = Number(now);
+    if (now == null || !Number.isFinite(t)) return false;
+    return (row.win[0] == null || t >= row.win[0]) && (row.win[1] == null || t <= row.win[1]);
+  }
+
   function orderPool(D, rv, opts) {
     const O = D.orders, o = opts || {};
     rv = Number(rv);
@@ -223,9 +252,9 @@
     return best;
   }   // operation 100211, 2 per crop cycle
 
-  // Utils.calcTemperatureDiffWorkRatio with homeland_config envDiffWorkRatioInfo [1, 0.8, 0.5, 0.2].
-  // Applied as a growth-speed multiplier (time / ratio): the direction is inferred, not yet measured.
-  const ENV_RATIO = [1, 0.8, 0.5, 0.2];
+  // Utils.calcTemperatureDiffWorkRatio with homeland_config envDiffWorkRatioInfo, data.js envRatio (1, 0.8, 0.5, 0.2
+  // on every build so far; it was copied here by hand until season 2's review). Applied as a growth-speed multiplier
+  // (time / ratio): the direction is inferred, not yet measured.
   // Heat Furnace formulas 45/46 (Fire 1), Cooling Unit 54 (Ice 1) / 55 (Ice 2), Sunlamp 61 (Light 1);
   // each keeps one Aniimo busy all the time (unitWorkload, type 1).
   const DEVICES = [
@@ -277,11 +306,11 @@
     return PACK.every(([a, b, c]) => a * u + b * v <= c * (n || 1) + 1e-9);
   }
 
-  function zoneRatio(r, zone) {
+  function zoneRatio(D, r, zone) {
     zone = zone || {};                             // by-hand columns pass none (a crop id ticked by hand threw here; Gemini)
     if (r.light && r.force && !zone.light) return 0;          // forceEnvRequire: cannot grow at all
     if (r.temp == null) return 1;
-    return ENV_RATIO[Math.min(Math.abs(r.temp - (zone.temp || 0)), 3)];
+    return D.envRatio[Math.min(Math.abs(r.temp - (zone.temp || 0)), D.envRatio.length - 1)];
   }
 
   function defaults(D) {
@@ -306,10 +335,13 @@
       personality: false,          // assume every worker's personality matches its bench (+20%)
       cropOpOverhead: 0.5,         // minutes of walking per crop operation (not in the data; a guess)
       values: {},                  // itemId -> coin value for things you keep (Aniipods), or for a
-                                   // currency (e.g. Moonray Wheat) so seeds priced in it can be bought
+                                   // currency (a season's) so seeds priced in it can be bought
       disabledRecipes: [],         // recipe ids the user does not have (not everyone has every recipe)
       keep: {},                    // itemId -> how many per DAY to make for yourself (e.g. Aniipods), not sold
-      moonrayWheat: false,         // event seeds cost Moonray Wheat (item 4040033), not Home Coin: allow them
+      // the user has the season's currency: seeds priced in the currency of the season running at `now` (data.js
+      // orders.seasons[].money: Moonray Wheat in season 1, Weird Jelly Beans in season 2) cost no coin. It was a
+      // Moonray Wheat option, with that currency's id written here; season 2 changed the currency (user, 2026-10-29).
+      seasonMoney: false,
       feed: true,                  // plan food for every Aniimo in the home
       homeAniimo: null,            // Aniimo that eat; null = cap (every Aniimo in the home eats)
       minFoodPerItem: 0,           // only feed items worth at least this much food each (fewer refills:
@@ -345,6 +377,9 @@
       if (off.has(r.id)) continue;
       if (r.note && !owned.has("all") && !owned.has(r.note.toLowerCase())) continue;
       if (r.mod && Math.min(inp.modules[r.mod[0]] || 0, lim ? lim.modules[r.mod[0]] || 0 : Infinity) < Number(r.mod[1])) continue;
+      // a season recipe exists only inside its window (data.js win, the Americas dates), by the page's date; with no
+      // date nothing seasonal is offered (user, 2026-10-30: "By today's date"; it offered them always before)
+      if (r.win && !(inp.now >= r.win[0] && inp.now < r.win[1])) continue;
       for (const [fac, minLv] of r.fac) {
         const have = inp.facilities[fac];
         const lv = maxLv ? Math.min(have ? have.level || 0 : 0, maxLv[fac] || 0) : have && have.level || 0;
@@ -359,18 +394,20 @@
   // per seed, or null when there is none (planOnce's seed costs; orderBlock's "seed you cannot buy")
   function seedPrice(D, inp, i) {
     let best = null;
+    // the currency of the season running at the page's date (the planner never reads the clock)
+    const money = (activeSeason(D, inp.now) || {}).money;
     for (const row of (D.seedShop && D.seedShop[i]) || []) {
       if (row.rv != null && row.rv > inp.rv) continue;
-      // one tick per payment (user, 2026-10-19): "Event seeds" is the Home Coin ones (Sweet Potato), and the Moonray
-      // Wheat ones (Moondew Radish, Waxing Moon Pepper) follow only "I have Moonray Wheat"; they needed both before
-      const moonray = row.cur === 4040033 && inp.moonrayWheat;
-      if (row.limited && !inp.eventSeeds && !moonray) continue;
+      if (!onSale(row, inp.now)) continue;           // its own sale window, at the page's date
+      // one tick per payment (user, 2026-10-19): "Event seeds" is the Home Coin ones (Sweet Potato), and the season's
+      // currency ones (Moondew Radish, Waxing Moon Pepper in season 1) follow only "I have the season's currency"
+      const seasonPaid = money != null && row.cur === money && !!inp.seasonMoney;
+      if (row.limited && !inp.eventSeeds && !seasonPaid) continue;
       if (!row.onSale && !row.limited) continue;
       const v = (inp.values || {})[row.cur];
-      // Moonray Wheat is event currency, not Home Coin: when the user says they have it, the seed
-      // costs no coin; otherwise only an explicit coin value makes it buyable
-      const coinPerUnit = row.cur === 1010 ? 1 : (row.cur === 4040033 && inp.moonrayWheat) ? 0
-        : (v != null && v !== "" ? Number(v) : null);
+      // a season's currency is not Home Coin: when the user says they have it, the seed costs no coin; otherwise
+      // (another season's, or not ticked) only an explicit coin value makes it buyable
+      const coinPerUnit = row.cur === 1010 ? 1 : seasonPaid ? 0 : (v != null && v !== "" ? Number(v) : null);
       if (coinPerUnit == null) continue;
       const cost = row.amt * coinPerUnit / (row.per || 1);
       if (best == null || cost < best) best = cost;
@@ -445,7 +482,7 @@
     const opRate = (o) => workPerMinute(o.lv, petLv(o.lv, o.ab), o.f, personalityFits(D, inp, fac)) * fed;
     let minutes, workerHours, kind, cropJobs = null, speed = null;
     if (r.k === "production") {
-      const ratio = zoneRatio(r, zone);
+      const ratio = zoneRatio(D, r, zone);
       if (!(ratio > 0)) return null;
       minutes = (r.t - (inp.watered ? r.wc : 0)) / 60 / ratio;
       const ops = r.ops.filter((o) => o.wl).concat(inp.watered && r.wc ? [WATERING, WATERING] : []);
@@ -1317,7 +1354,7 @@
       for (const z of zs) {
         // a device setting only for crops it speeds up (user, 2026-10-02: Cherry Blossom wants Warm +1; under
         // Scorching +2 it is 1 off, 80%, exactly as with no device, and the plan listed it there for nothing)
-        if (z && z !== neutral && !(zoneRatio(r, z) > zoneRatio(r, neutral))) continue;
+        if (z && z !== neutral && !(zoneRatio(D, r, z) > zoneRatio(D, r, neutral))) continue;
         const c = buildColumn(D, inp, r, fac, z); if (c) cols.push(c);
       }
     }
@@ -1839,8 +1876,8 @@
       const crops = cols.filter((c, j) => c.zone === z && res.x[j] > 1e-6).map((c) => describe(D, c.r));
       // crops under it at less than full speed (one setting per device: Maple Syrup, wanting Cold -2, at 80%
       // under Cool -1 beside Ginseng; correct, but it read like a bug without the number; audit 2026-10-02)
-      const slow = [...new Set(cols.filter((c, j) => c.zone === z && res.x[j] > 1e-6 && zoneRatio(c.r, z) < 1)
-        .map((c) => c.r.out[0][0] + "|" + zoneRatio(c.r, z)))].map((k) => { const [i, rt] = k.split("|"); return { item: Number(i), ratio: Number(rt) }; });
+      const slow = [...new Set(cols.filter((c, j) => c.zone === z && res.x[j] > 1e-6 && zoneRatio(D, c.r, z) < 1)
+        .map((c) => c.r.out[0][0] + "|" + zoneRatio(D, c.r, z)))].map((k) => { const [i, rt] = k.split("|"); return { item: Number(i), ratio: Number(rt) }; });
       // no more devices than their plots need (maxed RV 20: "2 Cooling Units" over 13 Farmland, one covers 16;
       // a tie under the solver's gap; audit 2026-10-02)
       let need = 1;                                // fewest devices whose packing holds what is under them
@@ -1947,6 +1984,12 @@
     };
   }
 
+  // The last RV level the game has: 20 until season 2, 22 since build 3846247 (2026-10-29), read from the data
+  // wherever a ceiling is needed (tests/rv_levels.test.mjs holds the page, the planner and the map to it)
+  function maxRv(D) {
+    return Math.max(...Object.keys(D.rvCaps).map(Number));
+  }
+
   // What the chosen RV level allows: highest level and how many of each facility (home_object_place_data),
   // highest level per module, and the data's Aniimo cap.
   function rvLimits(D, rv) {
@@ -1954,7 +1997,8 @@
     for (const [n, f] of Object.entries(D.facilities)) {
       const ok = f.levels.filter((l) => l.rv == null || l.rv <= rv);
       if (ok.length) fac[n] = Math.max(...ok.map((l) => l.lv));
-      if (f.maxCount) count[n] = ok.length ? f.maxCount[Math.max(1, Math.min(rv, 20)) - 1] : 0;
+      // one count per RV level the game has (it stopped at 20: RV 21-22 planned with RV 20's counts)
+      if (f.maxCount) count[n] = ok.length ? f.maxCount[Math.max(1, Math.min(rv, f.maxCount.length)) - 1] : 0;
     }
     for (const [n, levels] of Object.entries(D.modules)) {
       const ok = levels.filter((l) => l.rv != null && l.rv <= rv);
@@ -2458,8 +2502,8 @@
       || jobLevels(b) - jobLevels(a) || a.n.localeCompare(b.n));
   }
 
-  const api = { coverage, coverFits, plan, fullTimeIngredient, rvLimits, wholeCounts, idealPersonality, alternatives, defaults, workPerMinute, recipeChoices, candidates, bestAbilityLevels, bestCase, idealRoster, roster, formLabel, parseJob, familyBest, released, rvChain, rvTime, orderPool, activeSeason, betterOrders, afterRetry, orderTaken, seedPrice, useSolver,
+  const api = { coverage, coverFits, plan, fullTimeIngredient, rvLimits, maxRv, zoneRatio, wholeCounts, idealPersonality, alternatives, defaults, workPerMinute, recipeChoices, candidates, bestAbilityLevels, bestCase, idealRoster, roster, formLabel, parseJob, familyBest, released, rvChain, rvTime, orderPool, activeSeason, nextEdge, betterOrders, afterRetry, orderTaken, seedPrice, useSolver,
     fewerRow, fewerStop, fewerLoss, fewerPick, FEWER_ROWS,
-    lineMoney, solverName: () => (HIGHS ? "HiGHS" : "built-in"), solverTimeLimit: timeLimit };
+    lineMoney, rateFraction, solverName: () => (HIGHS ? "HiGHS" : "built-in"), solverTimeLimit: timeLimit };
   if (typeof module !== "undefined") module.exports = api; else root.Planner = api;
 })(this);

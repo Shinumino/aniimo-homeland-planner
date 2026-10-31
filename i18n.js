@@ -66,8 +66,6 @@
     "{0} {1}: tick up to {0}.": "{0} {1}: marque até {0}.",
     "No Aniipod Maker or Dance Pad Polisher in your layout.": "Nenhum Fabricante de Aniicápsula ou Jogo de Dança Lapidador no seu layout.",
     "{0}: {1}, whenever its ingredients are in storage (not in the coin plan).": "{0}: {1}, sempre que os ingredientes estão no armazém (fora do plano de moedas).",
-    "I have Moonray Wheat to buy event seeds (Moondew Radish, Waxing Moon Pepper)":
-      "Tenho Trigo do Luar para comprar sementes de evento (Rabanete Orvalho-lunar, Pimenta da Lua Crescente)",
     "Next RV level": "Próximo nível do Motorhome",
     "Upgrade to RV": "Melhorar para o Motorhome",
     "Plan for the fastest upgrade (instead of the most coin)": "Planejar a melhoria mais rápida (em vez da maior renda)",
@@ -119,7 +117,6 @@
     "Your Aniimo": "Seus Aniimo",
     "Assumptions": "Premissas",
     "Event seeds you can buy": "Sementes de evento que você pode comprar",
-    "Moonray Wheat": "Trigo do Luar",              // the event currency (item 4040033, not in the page's item list)
     "Food": "Comida",
     "Plots one device reaches": "Lotes que um dispositivo alcança",
     "{0} below RV {1}'s max": "{0} abaixo do máximo do Motorhome {1}",
@@ -349,7 +346,7 @@
     "Warm +1": "Morno +1", "Scorching +2": "Escaldante +2", "Cool -1": "Fresco -1", "Cold -2": "Frio -2", "Light": "Luz",
     "Quick": "Rápida", "Premium": "Premium", "High-Speed": "Alta velocidade",
     // Next RV panel
-    "RV 20 is the last level.": "O Motorhome 20 é o último nível.",
+    "RV {0} is the last level.": "O Motorhome {0} é o último nível.",
     "Home Coin": "Moeda do Lar",
     "{0} = {1} on the {2} (Lv {3}+)": "{0} = {1} na {2} (Nv. {3}+)",
     "RV {0} → {1}: {2}, {3} {4}; the upgrade then takes {5} h.": "Motorhome {0} → {1}: {2}, {3} {4}; depois a melhoria leva {5} h.",
@@ -424,6 +421,15 @@
   const fill = (s, args) => s.replace(/\{(\d+)\}/g, (_, k) => (args[k] !== undefined ? args[k] : ""));
   function T(en, ...args) { return fill(lang === "pt" && PT[en] !== undefined ? PT[en] : en, args); }
   function setLang(l) { lang = l === "pt" ? "pt" : "en"; try { localStorage.setItem(KEY, lang); } catch (e) { /* ignore */ } }
+  // Every number the page shows, in the chosen language, with d decimals. toLocaleString writes "-0" for float noise
+  // just under zero (-1e-9) and for -0 itself, and "-0.0" with a decimal: the 2026-10-27 "-0.0%" was one call site of
+  // it. So a value that rounds to zero is written as 0; a real negative keeps its sign (-0.05 is "-0.1"). Halves round
+  // away from zero, as toLocaleString does (tests/rounding.test.mjs, float check 2026-10-29).
+  function fmt(n, d = 0) {
+    let x = Number(n);
+    if (Math.abs(x) < 0.5 * 10 ** -d) x = 0;
+    return x.toLocaleString(lang === "pt" ? "pt-BR" : "en-US", { maximumFractionDigits: d, minimumFractionDigits: d });
+  }
 
   // Game names. Every lookup takes the English key the planner uses and falls back to it.
   function names(D) {
@@ -434,6 +440,8 @@
     for (const a of D.aniimo || []) if (!(a.n in firstOf)) firstOf[a.n] = a.id;
     const N = {
       item: (id) => { const p = pt(); return (p && p.items[id]) || (D.items[id] ? D.items[id].n : String(id)); },
+      // a seed currency (Home Coin, a season's): its name in data.js currencies, and the game's pt_PT name
+      currency: (id) => { const p = pt(); return (p && (p.currencies || {})[id]) || (D.currencies || {})[id] || String(id); },
       itemByName: (n) => (byName[n] ? N.item(byName[n]) : n),
       fac: (n) => { const p = pt(); return (p && p.facilities[n]) || n; },
       mod: (n) => { const p = pt(); return (p && p.modules[n]) || n; },
@@ -506,5 +514,5 @@
     document.title = T("Aniimo Homeland Planner");
   }
 
-  root.I18N = { T, setLang, lang: () => lang, names, translatePage, PT };
+  root.I18N = { T, setLang, lang: () => lang, fmt, names, translatePage, PT };
 })(this);

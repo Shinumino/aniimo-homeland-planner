@@ -39,6 +39,14 @@ your browser. The website counts visits anonymously with [GoatCounter](https://w
 
 ## What's new
 
+**Season 2 (30 October 2026)**
+
+- Season 2 is in: RV 21 and 22 with their new crops and benches; seeds paid in the season's currency (Weird Jelly
+  Beans); season recipes offered only while their season runs; China-only items left out; Jabster is out.
+- Offline copy: at RV 18 with everything built and "Plan to fill the most orders" ticked, planning can now take longer
+  than the offline copy waits, because of the new Pearl Powder recipe. It then fills the same orders, may earn a
+  little less coin (up to 0.3%) and says it had to stop searching. The website is not affected.
+
 **October 2026**
 
 - Long plans now tell you what is happening: after 30 seconds the page says it is still loading, after 60 seconds
@@ -119,7 +127,9 @@ your browser. The website counts visits anonymously with [GoatCounter](https://w
 
 - The numbers (recipe times, workloads, prices, facility limits) were read from game build 3603741
   and checked against the game where we could. Rechecked after the updates to builds 3634150, 3668494,
-  3714366 and 3732728 (15 October 2026): none of these numbers changed. A game update can change them.
+  3714366 and 3732728 (15 October 2026): none of these numbers changed. Build 3846247 (season 2, 29 October
+  2026) added RV 21 and 22, new crops, benches and recipes and the season's currency; the work math did not
+  change (checked against the game's own code). A game update can change them.
 - The item, facility and Aniimo icons are the game's own art and belong to its owners.
 - This is a fan-made tool. It is not affiliated with or endorsed by the makers of Aniimo.
 

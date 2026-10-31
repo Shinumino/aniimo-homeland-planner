@@ -21,11 +21,15 @@
     "Dance Pad Polisher": [2.5, 2.5], "Crackle Power Pole": [1.5, 1.5], "Crackle Generator": [2, 2], "Heat Furnace": [1, 1],
     "Cooling Unit": [2, 2], Sunlamp: [1, 1], Hatchinator: [2, 2], "Storage Unit": [2, 2],
   };
-  // Land: 16 plots of 20 x 15; plot n opens at RV n (plot 1 from the start), each after the one before it
+  // Land: data.js plots (16) of 20 x 15; plot n opens at RV n (plot 1 from the start), each after the one before it.
+  // The grid is where the game draws them; tests/rv_levels.test.mjs holds it to the data's count.
   const PLOT_W = 20, PLOT_H = 15;
   const PLOT_GRID = [[13, 14, 15, 16], [12, 7, 8, 9], [11, 4, 3, 6], [10, 2, 1, 5]];   // rows top to bottom
-  const STORAGE_MAX = [0, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 5, 6, 6, 6, 7, 8];     // by RV 1..20
-  const poleMax = (rv) => (rv >= 20 ? 30 : rv >= 18 ? 24 : rv >= 16 ? 18 : rv >= 14 ? 12 : rv >= 12 ? 6 : 0);
+  // How many Storage Units and Power Poles an RV allows, from the data (the lists held here by hand ended at RV 20;
+  // season 2 added RV 21-22). Past the last level, the last level's count.
+  const byRv = (list, rv) => (list && list.length ? list[Math.max(1, Math.min(Number(rv) || 1, list.length)) - 1] : 0);
+  const storageMax = (D, rv) => byRv((D.storage || {}).maxCount, rv);
+  const poleMax = (D, rv) => byRv((D.facilities["Crackle Power Pole"] || {}).maxCount, rv);
   const AREA = { device: 9, "Crackle Generator": 11, "Crackle Power Pole": 7 };
   const WALK_SPEED = 3;                            // tiles per second, every Aniimo, straight line
   const HAUL_PER_TRIP = 60;                        // items a level-1 hauler carries (80/100/120 at levels 2-4)
@@ -66,8 +70,8 @@
     };
   }
 
-  function landPlots(rv) {
-    const open = Math.max(1, Math.min(16, Number(rv) || 1));
+  function landPlots(rv, count) {
+    const open = Math.max(1, Math.min(count || PLOT_GRID.flat().length, Number(rv) || 1));
     const out = [];
     PLOT_GRID.forEach((row, r) => row.forEach((n, c) => { if (n <= open) out.push({ n, x: c * PLOT_W, y: r * PLOT_H, w: PLOT_W, h: PLOT_H }); }));
     return out.sort((a, b) => a.n - b.n);
@@ -183,7 +187,7 @@
   function buildMap(D, plan, opts) {
     opts = opts || {};
     const rv = Number((plan && plan.inputs && plan.inputs.rv) || opts.rv || 1);
-    const plots = landPlots(rv);
+    const plots = landPlots(rv, D.plots);
     const land = Layer(), occ = Layer(), ban = Layer(), climate = Layer();
     land.add({ x: 0, y: 0, w: 80, h: 60 }, 1);
     for (const p of plots) land.add(p, -1);      // land.sum(rect) == 0: the whole rect is on open plots
@@ -320,7 +324,7 @@
     // spot linked to the network, and for each one the machine's best spot touching that pole's area.
     let poles = 0;
     const withPole = (u) => {
-      if (poles >= poleMax(rv)) return null;
+      if (poles >= poleMax(D, rv)) return null;
       const ctx = Object.assign(context(u), { areas: null });
       const net = networkAreas();
       const pw = 1.5, pa = AREA["Crackle Power Pole"];
@@ -353,7 +357,7 @@
       if (spot) u.item = placeSingle(u, spot); else unplaced.push(u);
     }
     // 3. the Storage Units, one at a time where they shorten hauling most
-    const maxStore = STORAGE_MAX[Math.min(20, Math.max(1, rv)) - 1];
+    const maxStore = storageMax(D, rv);
     for (let k = 0; k < maxStore; k++) {
       const hauled = items.filter((it) => it.haul).map((it) => [centre(it), it.haul, nearestStore(centre(it))]);
       let best = null;
@@ -426,7 +430,7 @@
       }
     }
     // 5. power poles for any E-mode machine still off the network, each linked to the network
-    for (let guard = 0; guard < 60 && poles < poleMax(rv); guard++) {
+    for (let guard = 0; guard < 60 && poles < poleMax(D, rv); guard++) {
       const areas = networkAreas();
       const off = items.filter((it) => it.electric && !powered(it, areas));
       if (!off.length) break;
@@ -467,6 +471,6 @@
     return net;
   }
 
-  const api = { SIZE, PLOT_GRID, STORAGE_MAX, poleMax, landPlots, buildMap, linked, WALK_SPEED, HAUL_PER_TRIP };
+  const api = { SIZE, PLOT_GRID, storageMax, poleMax, landPlots, buildMap, linked, WALK_SPEED, HAUL_PER_TRIP };
   if (typeof module !== "undefined") module.exports = api; else root.HomeMap = api;
 })(this);

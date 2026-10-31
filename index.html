@@ -246,7 +246,7 @@
       <!-- one tick per payment (user, 2026-10-19), each naming its seeds from the game data (renderEventSeeds) -->
       <h3>Event seeds you can buy</h3>
       <label class="check" id="eventSeedsRow"><input type="checkbox" id="eventSeeds"> <span id="eventSeedsLabel"></span></label>
-      <label class="check" id="moonrayRow"><input type="checkbox" id="moonrayWheat"> <span id="moonrayLabel"></span></label>
+      <label class="check" id="seasonMoneyRow"><input type="checkbox" id="seasonMoney"> <span id="seasonMoneyLabel"></span></label>
     </section>
 
     <section class="panel adv" id="aniimoPanel">
@@ -371,7 +371,7 @@
   // T(): the page's own words; N: game names (English keys in, the chosen language out)
   const { T } = window.I18N, N = window.I18N.names(D);
   const $ = (id) => document.getElementById(id);
-  const fmt = (n, d = 0) => Number(n).toLocaleString(window.I18N.lang() === "pt" ? "pt-BR" : "en-US", { maximumFractionDigits: d, minimumFractionDigits: d });
+  const fmt = window.I18N.fmt;   // every number on the page: a value that rounds to 0 shows as 0, never "-0" (i18n.js)
   const byName = (f) => (a, b) => f(a).localeCompare(f(b));
   // form names of one Aniimo (or of merged forms with the same jobs), in the chosen language
   const formLabel = (a) => (a.formIds || [a.form]).map((f, k) => N.form(f, (a.formNames || [a.fn || "Basic Form"])[k] || "Basic Form")).join(" / ");
@@ -402,10 +402,13 @@
   // Default setup = the layout in the user's original optimizer link (RV 11).
   const DEFAULT = {
     rv: 11, cap: 32, reserved: 2, haulers: 2, homeAniimo: "", minFoodPerItem: 0, workerMaxLevel: 3, personality: false, power: true,
-    watered: true, feed: true, eventSeeds: true, oneRecipePerBench: true, unreleased: ["Jabster"], rvGoal: { level: "" }, cropOpOverhead: 0.5, notes: [], keep: {}, aniipods: [], moonrayWheat: false,
+    watered: true, feed: true, eventSeeds: true, oneRecipePerBench: true, unreleased: [], rvGoal: { level: "" }, cropOpOverhead: 0.5, notes: [], keep: {}, aniipods: [], seasonMoney: false,
     ordersFocus: false, seasonOrders: false, seasonPerDay: "", shareIngredients: false, shareCap: 4,
     // fewest Aniimo: the tick, and the row picked in its table (Aniimo working; null = the first row)
     fewerAniimo: false, fewerPick: null,
+    // what a setup the page saves or exports is marked with: 2 = saved since season 2 (readSetup drops Jabster only
+    // from a setup without it; user, 2026-10-31: "Once, by a save marker")
+    setupVersion: 2,
     // Signal Transmitter Lv 2 (RV 11 max): its 2 RV Park places make the default cap of 32 add up
     modules: { "Ecological Module": 3, "Kitchen Module": 4, "Resource Detector": 2, "Crafting Module": 3, "Signal Transmitter": 2 },
     facilities: {
@@ -448,11 +451,13 @@
     // after a data update would otherwise wipe every setup that lists it; Fable, pre-release audit)
     const listOf = (ok) => (v) => (Array.isArray(v) && v.every((x) => typeof x === "string" || typeof x === "number") ? v.filter(ok) : undefined);
     const mapOf = (okKey) => (v) => { if (!obj(v)) return undefined; const m = {}; for (const [k, x] of Object.entries(v)) { if (!okKey(k)) continue; const n = num(x); if (x === "" ) m[k] = ""; else if (Number.isFinite(n)) m[k] = n; else return undefined; } return m; };
-    take("rv", whole(1, 20));
+    take("rv", whole(1, P.maxRv(D)));              // the data's last RV: 22 since season 2, it was 20 written here
     for (const k of ["cap", "reserved", "haulers", "minFoodPerItem", "cropOpOverhead"]) take(k, nonNeg);
     take("workerMaxLevel", (v) => (v === "" ? "" : whole(1, 4)(v)));
     take("homeAniimo", (v) => (v === "" || v === null ? "" : nonNeg(v)));
-    for (const k of ["personality", "power", "watered", "feed", "eventSeeds", "oneRecipePerBench", "moonrayWheat", "devices", "bestPrismana", "fastRv", "ordersFocus", "seasonOrders", "shareIngredients", "fewerAniimo"]) take(k, bool);
+    // seasonMoney: "I have the season's currency". A season-1 setup's Moonray Wheat tick is not carried over: that
+    // currency is gone and says nothing about the next one (user, 2026-10-30: start it unticked)
+    for (const k of ["personality", "power", "watered", "feed", "eventSeeds", "oneRecipePerBench", "seasonMoney", "devices", "bestPrismana", "fastRv", "ordersFocus", "seasonOrders", "shareIngredients", "fewerAniimo"]) take(k, bool);
     take("seasonPerDay", nonNeg);
     // 0 or less is no pick: clamped to 1 it planned a one-Aniimo row (Fable gate 2026-10-24; the page never writes it)
     take("fewerPick", (v) => { if (v === null || v === "") return null; const n = whole(0, 999)(v); return n === undefined ? undefined : n >= 1 ? n : null; });
@@ -471,6 +476,12 @@
     // "all" is the engine's own "every note" shortcut (planner.js available()); a file may carry it (Gemini Flash r3)
     take("notes", listOf((x) => x === "all" || D.notes.includes(x)));
     take("unreleased", listOf((x) => aniimoNames.has(x)));
+    // Jabster is out since season 2 (3846247, 2026-10-29): a setup saved before keeps him held back, so he is dropped
+    // from its list and the rest stays (user, 2026-10-30: "Drop Jabster once"). Once: only from a setup without the
+    // season-2 marker. He was dropped on every load, so a player who held him back after season 2 lost that tick on
+    // the next visit (ChatGPT, season-2 audit round 1); the page now saves every setup with setupVersion 2 (DEFAULT).
+    const marked = own(s, "setupVersion") && num(s.setupVersion) >= 2;
+    if (!marked && Array.isArray(out.unreleased)) out.unreleased = out.unreleased.filter((n) => n !== "Jabster");
     take("dedicated", listOf((x) => own(D.facilities, x)));
     take("aniipods", listOf((x) => Number.isFinite(Number(x))));
     take("disabledRecipes", listOf((x) => Number.isFinite(Number(x))));
@@ -485,7 +496,7 @@
         else if (own(D.facilities, k)) { const sub = plotMap(x); if (sub === undefined) return undefined; m[k] = sub; }
       }
       return m; });
-    take("rvGoal", (v) => (obj(v) ? { level: v.level === "" || v.level == null ? "" : whole(1, 20)(v.level) } : undefined));
+    take("rvGoal", (v) => (obj(v) ? { level: v.level === "" || v.level == null ? "" : whole(1, P.maxRv(D))(v.level) } : undefined));
     if (out.rvGoal && out.rvGoal.level === undefined) bad.push("rvGoal");
     take("sort", (v) => (obj(v) && typeof v.key === "string" && /^[a-z]+$/.test(v.key) && (v.dir === 1 || v.dir === -1) ? { key: v.key, dir: v.dir } : undefined));
     return bad.length ? null : out;
@@ -633,15 +644,17 @@
     if (setOpen) { $("facDetails").open = g.fac > 0; $("modDetails").open = g.mod > 0; }
   }
   // Event seeds, one tick per payment (user, 2026-10-19), each naming its seeds from the game data: the
-  // time-limited ones paid in Home Coin, and those paid in Moonray Wheat (planner.js seedPrice)
+  // time-limited ones paid in Home Coin, and those paid in the currency of the season running today (planner.js
+  // seedPrice; data.js orders.seasons[].money: Moonray Wheat in season 1, Weird Jelly Beans in season 2). With no
+  // season running, or none of its seeds in the data, its tick is hidden.
   function renderEventSeeds() {
-    const named = (cur) => Object.keys(D.seedShop || {}).filter((i) => (D.seedShop[i] || []).some((r) => r.limited && r.cur === cur))
-      .map((i) => N.item(Number(i)));
-    const coin = named(1010), moon = named(4040033);
+    const seeds = (keep) => Object.keys(D.seedShop || {}).filter((i) => (D.seedShop[i] || []).some(keep)).map((i) => N.item(Number(i)));
+    const season = P.activeSeason(D, nowSec()), money = season ? season.money : null;
+    const coin = seeds((r) => r.limited && r.cur === 1010), paid = money == null ? [] : seeds((r) => r.cur === money);
     $("eventSeedsLabel").textContent = coin.join(", ") + " (" + T("Home Coin") + ")";
-    $("moonrayLabel").textContent = moon.join(", ") + " (" + T("Moonray Wheat") + ")";   // not in D.items: only items the planner uses are
+    $("seasonMoneyLabel").textContent = paid.join(", ") + " (" + N.currency(money) + ")";   // the game's name, both languages
     $("eventSeedsRow").style.display = coin.length ? "" : "none";
-    $("moonrayRow").style.display = moon.length ? "" : "none";
+    $("seasonMoneyRow").style.display = paid.length ? "" : "none";
   }
   // Aniimo cap = home places for the RV + RV Park places from the Signal Transmitter's level
   // (user, 2026-09-28: the cap did not change with the RV; the game shows 32 at RV 11 = 30 + 2)
@@ -783,7 +796,7 @@
   let lastPlan = null;
   function renderRvInfo(res) {
     const c = P.rvChain(D, goalLevel());
-    if (!c) { $("rvInfo").innerHTML = `<div class="muted">${T("RV 20 is the last level.")}</div>`; return; }
+    if (!c) { $("rvInfo").innerHTML = `<div class="muted">${T("RV {0} is the last level.", P.maxRv(D))}</div>`; return; }
     const name = N.item;
     const cur = c.cur === 1010 ? T("Home Coin") : name(c.cur);
     const steps = c.steps.map((st) => `<div style="padding-left:${st.depth * 14}px">${itemIco(st.item)}<b>${fmt(st.qty)} ${name(st.item)}</b>
@@ -911,7 +924,10 @@
   // (S.aniipods keeps its name so saved setups still load.)
   const BY_HAND_FACILITIES = ["Aniipod Maker", "Dance Pad Polisher"];
   const byHandFac = (r) => BY_HAND_FACILITIES.find((f) => r.fac.some(([g]) => g === f));
+  // the page's date too: none of them has a window in 3846247, but one that had would have been offered at any date
+  // (Gemini, season-2 audit round 2)
   const byHandRecipes = () => D.recipes.filter((r) => {
+    if (r.win && !(nowSec() >= r.win[0] && nowSec() < r.win[1])) return false;
     const f = byHandFac(r), have = f && S.facilities[f];
     return have && have.count > 0 && r.fac.some(([g, lv]) => g === f && lv <= (have.level || 0));
   });
@@ -947,11 +963,15 @@
         renderAniipods(); recalc();
       };
     });
-    const mw = $("moonrayWheat"); mw.checked = !!S.moonrayWheat; mw.onchange = () => { S.moonrayWheat = mw.checked; recalc(); };
+    const sm = $("seasonMoney"); sm.checked = !!S.seasonMoney; sm.onchange = () => { S.seasonMoney = sm.checked; recalc(); };
   }
 
+  // the recipes on offer at the page's date, as the plan has them: with no date a season recipe is never on offer, so
+  // the list never had one and "All off" left it planned (ChatGPT, season-2 audit round 1, 2026-10-31)
+  const datedChoices = () => P.recipeChoices(D, Object.assign({}, S, { now: nowSec() }));
   function renderRecipes() {
-    const choices = P.recipeChoices(D, S);
+    datedFor = nowSec();
+    const choices = datedChoices();
     const off = new Set(S.disabledRecipes.map(Number));
     const byFac = {};
     for (const c of choices) for (const f of c.facilities) (byFac[f] = byFac[f] || []).push(c);
@@ -962,7 +982,7 @@
     });
   }
   $("allOn").onclick = () => { S.disabledRecipes = []; renderRecipes(); recalc(); };
-  $("allOff").onclick = () => { S.disabledRecipes = P.recipeChoices(D, S).map((c) => c.id); renderRecipes(); recalc(); };
+  $("allOff").onclick = () => { S.disabledRecipes = datedChoices().map((c) => c.id); renderRecipes(); recalc(); };
 
   $("export").onclick = () => {
     const blob = new Blob([JSON.stringify(S, null, 2)], { type: "application/json" });
@@ -1053,6 +1073,32 @@
   // when the plan then failed (release audit r1, ChatGPT Astra; tests/smoke_layout.py).
   // keepPick: the row picked in the fewest-Aniimo table goes back to the first row on any change (user, 2026-10-24),
   // except where nothing was changed by hand: the page opening, a setup file loaded, a language switch (renderAll).
+  // Season and recipe-window edges (season-2 audit round 1, 2026-10-31, ChatGPT + Gemini; user: "Re-plan at the edge").
+  // A plan, the recipe list and the season row are for the date they were made on, until P.nextEdge. An open page makes
+  // all three again when a window or a season starts or ends: a timer for the next edge, a look when the tab comes back
+  // (a hidden tab's timers may not run), and a plan that comes back after an edge it was not made for is made again
+  // instead of shown (tests/smoke_season_edges.py). Nothing was changed by hand, so the picked row stays (keepPick).
+  // datedFor: the date the dated parts were drawn for (renderRecipes sets it). A plan that starts just after an edge,
+  // before its timer (an input changed in the 80 ms wait, a slow solver load), replaced the timer and only the timer
+  // redrew them, so the list and the rows stayed as before the edge (ChatGPT, round 2): run() redraws them too.
+  let edgeTimer = null, plannedFor = null, datedFor = null;
+  const pastEdge = (since) => { const e = P.nextEdge(D, since); return e !== null && nowSec() >= e; };
+  // what the date decides on the page besides the plan: the season-currency row, the recipe list, the by-hand list,
+  // and the season-orders tick (in the orders panel; it waited for the new plan, Gemini, round 2)
+  function renderDated() { renderEventSeeds(); renderRecipes(); renderAniipods(); renderOrders(null); }
+  function atEdge() { renderDated(); recalc(true); }
+  function watchEdge(since) {
+    clearTimeout(edgeTimer);
+    plannedFor = since;
+    const e = P.nextEdge(D, since);
+    if (e === null) return;
+    // setTimeout holds ~24.8 days at most and fires at once past that (season 2's end was 41 days off when it came):
+    // a later edge is looked at again after a day
+    const ms = Math.min(Math.max(0, (e - nowSec()) * 1000) + 1000, 24 * 3600 * 1000);
+    edgeTimer = setTimeout(() => (pastEdge(since) ? atEdge() : watchEdge(since)), ms);
+  }
+  document.addEventListener("visibilitychange", () => { if (!document.hidden && plannedFor !== null && pastEdge(plannedFor)) atEdge(); });
+
   function recalc(keepPick) {
     if (!keepPick) S.fewerPick = null;
     // the table is for the old setup from now on: in the 80 ms before run() a click on it showed a plan of the old
@@ -1068,6 +1114,8 @@
       workerMaxLevel: Number(S.workerMaxLevel) || 3, fastRv: S.fastRv ? goalLevel() : null,
       ordersFocus: S.ordersFocus === true, seasonOrders: S.seasonOrders === true, shareIngredients: S.shareIngredients === true,
       fewerAniimo: S.fewerAniimo === true, now: nowSec() });
+    if (datedFor !== null && pastEdge(datedFor)) renderDated();
+    watchEdge(inp.now);
     const facs = {};
     for (const [n, f] of Object.entries(S.facilities)) if (f.count > 0) facs[n] = f;
     const pods = byHandOn();
@@ -1094,10 +1142,15 @@
     // rows, rosters and budget stayed up, and Simple (no header) said nothing (release audit r1, ChatGPT Astra)
     solve("plan", inp).then((p) => {
       if (token !== runToken) return;
+      if (pastEdge(inp.now)) return atEdge();     // made for before a window or season edge that has passed meanwhile
       waiting(false);
       const ms = performance.now() - t0;
       startFewer(inp, p, ms); show(inp, p, ms); fillFewer(token);
-    }, (err) => { if (token === runToken) { waiting(false); show(inp, { status: String(err && err.message || err), warnings: [] }, performance.now() - t0); } });
+    }, (err) => {
+      if (token !== runToken) return;
+      if (pastEdge(inp.now)) return atEdge();
+      waiting(false); show(inp, { status: String(err && err.message || err), warnings: [] }, performance.now() - t0);
+    });
   }
 
   // Still planning after 30 s, then 60 s (user, 2026-10-27): the player is told the page is working, not broken. Each
@@ -1501,7 +1554,7 @@
       T("1 square = 1 tile; darker lines every 5"),
     ].filter(Boolean).map((x) => `<span>${x}</span>`).join("");
     let out = `<div class="map-wrap"><div class="map-legend">${legend}</div><svg viewBox="${fx0 - 0.3} ${fy0 - 0.3} ${fx1 - fx0 + 0.6} ${fy1 - fy0 + 0.6}" role="img" aria-label="${T("Base layout")}">${land}${grid}${g}</svg></div>`;
-    const maxStore = window.HomeMap.STORAGE_MAX[Math.min(20, Math.max(1, m.rv)) - 1], stores = count("storage");
+    const maxStore = window.HomeMap.storageMax(D, m.rv), stores = count("storage");
     const notes = [T("{0} open plots of 20 × 15 (RV {1}).", m.plots.length, m.rv)];
     // RV 1 has no Storage Unit to place: no sentence, where "0 Storage Units (the most RV 1 allows)" stood
     if (maxStore) notes.push(stores >= maxStore
